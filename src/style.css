@@ -1,0 +1,51 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: radial-gradient(120% 120% at 50% 40%, #16202b 0%, #0b1016 70%);
+  cursor: crosshair;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  user-select: none;
+}
+
+#world {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  top: 14px;
+  left: 16px;
+  color: #8fa3b8;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+#hint {
+  position: fixed;
+  bottom: 22px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: #5d7186;
+  font-size: 13px;
+  pointer-events: none;
+  transition: opacity 2s ease;
+}
+
+#hint.hidden {
+  opacity: 0;
+}
