@@ -1,9 +1,9 @@
 import './style.css';
+import { clamp01, lerp } from './math.ts';
+import { descend, FOUNDER, hueShift, type Genes } from './genes.ts';
 import {
   chooseState,
-  clamp01,
   knock,
-  lerp,
   personalSpace,
   updateMoods,
   type CritterState,
@@ -45,6 +45,16 @@ interface Vec {
   y: number;
 }
 
+type Quirk = 'yawn' | 'stretch' | 'lookAround' | 'wiggle' | 'sniff';
+
+const QUIRK_SECONDS: Record<Quirk, number> = {
+  yawn: 1.4,
+  stretch: 1.1,
+  lookAround: 1.6,
+  wiggle: 0.9,
+  sniff: 0.8,
+};
+
 const pip = {
   x: view.w / 2,
   y: view.h / 2,
@@ -53,12 +63,15 @@ const pip = {
   facing: 1,
   state: 'wander' as CritterState,
   stateTime: 0,
+  genes: descend(FOUNDER, 6),
   moods: { fear: 0, curiosity: 0, trust: 0.5 } as Moods,
   wanderTarget: null as Vec | null,
   pauseFor: 0,
   blinkIn: 2,
   emote: '',
   emoteFor: 0,
+  quirk: null as Quirk | null,
+  quirkFor: 0,
   antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
 };
 
@@ -76,7 +89,7 @@ function currentSenses(): Senses {
 }
 
 function space(): number {
-  return personalSpace(pip.moods.trust);
+  return personalSpace(pip.moods.trust, pip.genes);
 }
 
 function showEmote(symbol: string): void {
@@ -87,17 +100,20 @@ function showEmote(symbol: string): void {
 // ------------------------------------------------------------------ movement
 
 function steerToward(tx: number, ty: number, accel: number, maxSpeed: number, dt: number): void {
+  const zip = lerp(0.85, 1.15, pip.genes.liveliness);
+  const a = accel * zip;
+  const cap = maxSpeed * zip;
   const dx = tx - pip.x;
   const dy = ty - pip.y;
   const d = Math.hypot(dx, dy);
   if (d > 1) {
-    pip.vx += (dx / d) * accel * dt;
-    pip.vy += (dy / d) * accel * dt;
+    pip.vx += (dx / d) * a * dt;
+    pip.vy += (dy / d) * a * dt;
   }
   const sp = Math.hypot(pip.vx, pip.vy);
-  if (sp > maxSpeed) {
-    pip.vx = (pip.vx / sp) * maxSpeed;
-    pip.vy = (pip.vy / sp) * maxSpeed;
+  if (sp > cap) {
+    pip.vx = (pip.vx / sp) * cap;
+    pip.vy = (pip.vy / sp) * cap;
   }
 }
 
@@ -195,19 +211,37 @@ function updateAntenna(dt: number): void {
   a.y += a.vy * dt;
 }
 
+function inIdleState(): boolean {
+  return pip.state === 'wander' || pip.state === 'curious' || pip.state === 'snuggle';
+}
+
+function maybeStartQuirk(dt: number): void {
+  if (!inIdleState() || Math.hypot(pip.vx, pip.vy) >= 30) return;
+  if (Math.random() > dt / lerp(9, 4, pip.genes.liveliness)) return;
+  const options: Quirk[] = ['stretch', 'lookAround', 'sniff'];
+  if (pip.moods.fear < 0.1) options.push('yawn');
+  if (pip.state === 'snuggle' || pip.moods.trust > 0.7) options.push('wiggle');
+  pip.quirk = options[Math.floor(Math.random() * options.length)];
+  pip.quirkFor = QUIRK_SECONDS[pip.quirk];
+}
+
 function updateTimers(dt: number): void {
   pip.emoteFor = Math.max(0, pip.emoteFor - dt);
   pip.blinkIn -= dt;
   if (pip.blinkIn < -0.12) pip.blinkIn = 1.5 + Math.random() * 4;
+  if (pip.quirk) {
+    if (!inIdleState()) {
+      pip.quirk = null; // a scare or sleep interrupts whatever it was doing
+    } else {
+      pip.quirkFor -= dt;
+      if (pip.quirkFor <= 0) pip.quirk = null;
+    }
+  } else {
+    maybeStartQuirk(dt);
+  }
 }
 
 // ------------------------------------------------------------------ drawing
-
-type Rgb = [number, number, number];
-
-function mixColor(a: Rgb, b: Rgb, t: number): Rgb {
-  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
-}
 
 // the touch ghost, made visible: its opacity IS the presence value the brain sees
 function drawTouchGhost(): void {
@@ -229,13 +263,18 @@ function drawTouchGhost(): void {
   ctx.globalAlpha = 1;
 }
 
+// genetic base color with relative mood tinting: fear cools and washes out, snuggling warms
 function bodyColor(): string {
-  const calm: Rgb = [111, 211, 176];
-  const scared: Rgb = [154, 160, 214];
-  const warm: Rgb = [255, 178, 122];
-  let c = mixColor(calm, scared, pip.moods.fear);
-  if (pip.state === 'snuggle') c = mixColor(c, warm, 0.6);
-  return `rgb(${c[0] | 0}, ${c[1] | 0}, ${c[2] | 0})`;
+  const g = pip.genes;
+  const fear = pip.moods.fear;
+  let h = hueShift(g.hue, 250, fear * 0.4);
+  let s = g.sat * (1 - fear * 0.35);
+  const l = g.light + fear * 5;
+  if (pip.state === 'snuggle') {
+    h = hueShift(h, 30, 0.35);
+    s = Math.min(90, s + 12);
+  }
+  return `hsl(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%)`;
 }
 
 function draw(t: number): void {
@@ -249,16 +288,47 @@ function draw(t: number): void {
   const jx = (Math.random() - 0.5) * 4 * trembling;
   const jy = (Math.random() - 0.5) * 4 * trembling;
 
+  // idle quirks nudge the pose
+  let stretchPose = 0;
+  let jiggle = 0;
+  let sweepLook: number | null = null;
+  let mouthOpen = 0;
+  if (pip.quirk) {
+    const p = 1 - pip.quirkFor / QUIRK_SECONDS[pip.quirk];
+    const arc = Math.sin(p * Math.PI);
+    switch (pip.quirk) {
+      case 'yawn':
+        mouthOpen = arc;
+        break;
+      case 'stretch':
+        stretchPose = arc * 0.16;
+        break;
+      case 'lookAround':
+        sweepLook = Math.sin(p * Math.PI * 2) * 3;
+        break;
+      case 'wiggle':
+        jiggle = Math.sin(p * Math.PI * 6) * 2.5;
+        break;
+      case 'sniff':
+        jiggle = Math.sin(p * Math.PI * 10) * 0.8;
+        break;
+      default: {
+        const unhandled: never = pip.quirk;
+        throw new Error(`unhandled quirk: ${String(unhandled)}`);
+      }
+    }
+  }
+
   const bob = asleep
     ? Math.sin(t * 2) * 1.5
     : Math.sin(t * (6 + speed / 40)) * Math.min(3, 1 + speed / 80);
-  const x = pip.x + jx;
+  const x = pip.x + jx + jiggle;
   const y = pip.y + jy + bob;
 
   const R = 24;
   const stretch = Math.min(0.22, speed / 900);
-  const sx = 1 + stretch;
-  const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1);
+  const sx = (1 + stretch) * (1 - stretchPose * 0.35);
+  const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose);
   const squish = pip.state === 'cower' ? 0.78 : 1;
   const color = bodyColor();
 
@@ -308,7 +378,11 @@ function draw(t: number): void {
     lookX = Math.cos(a) * 2.8;
     lookY = Math.sin(a) * 2.8;
   }
-  const blinking = pip.blinkIn < 0;
+  if (sweepLook !== null) {
+    lookX = sweepLook;
+    lookY = 0;
+  }
+  const blinking = pip.blinkIn < 0 || mouthOpen > 0.35;
   for (const side of [-1, 1]) {
     const ex = x + side * 9;
     if (asleep || blinking) {
@@ -327,6 +401,14 @@ function draw(t: number): void {
     ctx.fillStyle = '#1c2733';
     ctx.beginPath();
     ctx.arc(ex + lookX, eyeY + lookY, pupil, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // yawning mouth
+  if (mouthOpen > 0.05) {
+    ctx.fillStyle = '#1c2733';
+    ctx.beginPath();
+    ctx.ellipse(x, eyeY + 10, 3.5, 2 + mouthOpen * 5, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -354,6 +436,19 @@ const MOOD_LABELS: Record<CritterState, string> = {
   sleep: 'fast asleep',
 };
 
+function natureLabel(g: Genes): string {
+  const parts: string[] = [];
+  if (g.boldness > 0.65) parts.push('bold');
+  else if (g.boldness < 0.35) parts.push('timid');
+  if (g.clinginess > 0.65) parts.push('clingy');
+  else if (g.clinginess < 0.35) parts.push('aloof');
+  if (g.nosiness > 0.65) parts.push('nosy');
+  else if (g.nosiness < 0.35) parts.push('indifferent');
+  if (g.liveliness > 0.65) parts.push('zippy');
+  else if (g.liveliness < 0.35) parts.push('sleepy');
+  return parts.length ? parts.join(', ') : 'even-tempered';
+}
+
 function meter(v: number): string {
   const n = Math.round(clamp01(v) * 8);
   return '▰'.repeat(n) + '▱'.repeat(8 - n);
@@ -362,6 +457,7 @@ function meter(v: number): string {
 function updateHud(): void {
   hud.textContent =
     `pip: ${MOOD_LABELS[pip.state]}\n` +
+    `nature    ${natureLabel(pip.genes)}\n` +
     `trust     ${meter(pip.moods.trust)}\n` +
     `fear      ${meter(pip.moods.fear)}\n` +
     `curiosity ${meter(pip.moods.curiosity)}`;
@@ -379,16 +475,16 @@ function frame(now: number): void {
 
   for (const k of input.takeKnocks()) {
     const before = pip.moods.fear;
-    pip.moods = knock(pip.moods, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
+    pip.moods = knock(pip.moods, pip.genes, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
     if (pip.moods.fear > before) showEmote('!');
   }
 
   const senses = currentSenses();
   const beforeFear = pip.moods.fear;
-  pip.moods = updateMoods(pip.moods, senses, dt);
+  pip.moods = updateMoods(pip.moods, pip.genes, senses, dt);
   if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote('!');
 
-  const decision = chooseState(pip.state, pip.moods, senses);
+  const decision = chooseState(pip.state, pip.moods, pip.genes, senses);
   pip.moods = decision.moods;
   if (decision.startled) showEmote('!');
   if (decision.state !== pip.state) {

@@ -8,8 +8,20 @@ import {
   type Moods,
   type Senses,
 } from './brain.ts';
+import type { Genes } from './genes.ts';
 
 const calm: Moods = { fear: 0, curiosity: 0, trust: 0.5 };
+
+// every trait at its midpoint reproduces the original, pre-genetics tuning
+const plain: Genes = {
+  boldness: 0.5,
+  clinginess: 0.5,
+  nosiness: 0.5,
+  liveliness: 0.5,
+  hue: 159,
+  sat: 53,
+  light: 63,
+};
 
 function senses(overrides: Partial<Senses> = {}): Senses {
   return {
@@ -21,9 +33,9 @@ function senses(overrides: Partial<Senses> = {}): Senses {
   };
 }
 
-function runMoods(moods: Moods, s: Senses, seconds: number, dt = 0.1): Moods {
+function runMoods(moods: Moods, s: Senses, seconds: number, dt = 0.1, genes: Genes = plain): Moods {
   let out = moods;
-  for (let elapsed = 0; elapsed < seconds; elapsed += dt) out = updateMoods(out, s, dt);
+  for (let elapsed = 0; elapsed < seconds; elapsed += dt) out = updateMoods(out, genes, s, dt);
   return out;
 }
 
@@ -62,6 +74,13 @@ describe('moods', () => {
     expect(after.trust).toBeGreaterThan(calm.trust);
   });
 
+  it('a nosy pip warms to curiosity faster', () => {
+    const still = senses({ dist: 200 });
+    const nosy = runMoods(calm, still, 2, 0.1, { ...plain, nosiness: 1 });
+    const meh = runMoods(calm, still, 2, 0.1, { ...plain, nosiness: 0 });
+    expect(nosy.curiosity).toBeGreaterThan(meh.curiosity);
+  });
+
   it('moods stay clamped to [0, 1]', () => {
     const panic = runMoods(calm, senses({ dist: 10, speed: 10000 }), 10);
     expect(panic.fear).toBeLessThanOrEqual(1);
@@ -77,97 +96,150 @@ describe('moods', () => {
 
 describe('startle and knocks', () => {
   it('a click right next to it is terrifying', () => {
-    const after = startle(calm, 50, 1.0);
+    const after = startle(calm, plain, 50, 1.0);
     expect(after.fear).toBeGreaterThan(0.75);
     expect(after.trust).toBeLessThan(calm.trust);
   });
 
   it('a click across the room goes unnoticed', () => {
-    expect(startle(calm, 600, 1.0)).toEqual(calm);
+    expect(startle(calm, plain, 600, 1.0)).toEqual(calm);
   });
 
   it('a distant click barely dents curiosity; a close one wipes it', () => {
     const nosy: Moods = { ...calm, curiosity: 0.9 };
-    expect(startle(nosy, 490, 1.0).curiosity).toBeGreaterThan(0.8);
-    expect(startle(nosy, 50, 1.0).curiosity).toBeLessThan(0.15);
+    expect(startle(nosy, plain, 490, 1.0).curiosity).toBeGreaterThan(0.8);
+    expect(startle(nosy, plain, 50, 1.0).curiosity).toBeLessThan(0.15);
   });
 
   it('a knock right on top of it is terrifying', () => {
-    expect(knock(calm, 50, 1.0).fear).toBeGreaterThan(0.75);
+    expect(knock(calm, plain, 50, 1.0).fear).toBeGreaterThan(0.75);
   });
 
   it('a knock across the room piques curiosity instead', () => {
-    const after = knock(calm, 600, 1.0);
+    const after = knock(calm, plain, 600, 1.0);
     expect(after.fear).toBe(0);
     expect(after.curiosity).toBeGreaterThan(0);
   });
 
   it('a knock far beyond earshot changes nothing', () => {
-    expect(knock(calm, 950, 1.0)).toEqual(calm);
+    expect(knock(calm, plain, 950, 1.0)).toEqual(calm);
   });
 });
 
 describe('chooseState', () => {
   it('falls asleep when nothing has happened for a long while', () => {
     const s = senses({ presence: 0, stillFor: 40 });
-    expect(chooseState('wander', calm, s).state).toBe('sleep');
+    expect(chooseState('wander', calm, plain, s).state).toBe('sleep');
   });
 
   it('sleeps through distant gentle movement', () => {
     const s = senses({ dist: 400, speed: 100 });
-    expect(chooseState('sleep', calm, s).state).toBe('sleep');
+    expect(chooseState('sleep', calm, plain, s).state).toBe('sleep');
   });
 
   it('a lingering ghost does not wake it', () => {
     const s = senses({ presence: 0.4, dist: 100 });
-    expect(chooseState('sleep', calm, s).state).toBe('sleep');
+    expect(chooseState('sleep', calm, plain, s).state).toBe('sleep');
   });
 
   it('wakes with a startle when the watcher barges in close', () => {
-    const decision = chooseState('sleep', calm, senses({ dist: 100 }));
+    const decision = chooseState('sleep', calm, plain, senses({ dist: 100 }));
     expect(decision.state).not.toBe('sleep');
     expect(decision.startled).toBe(true);
     expect(decision.moods.fear).toBeGreaterThan(0);
   });
 
   it('flees when frightened, cowers when terrified', () => {
-    expect(chooseState('wander', { ...calm, fear: 0.5 }, senses()).state).toBe('flee');
-    expect(chooseState('wander', { ...calm, fear: 0.9 }, senses()).state).toBe('cower');
+    expect(chooseState('wander', { ...calm, fear: 0.5 }, plain, senses()).state).toBe('flee');
+    expect(chooseState('wander', { ...calm, fear: 0.9 }, plain, senses()).state).toBe('cower');
+  });
+
+  it('a bold pip holds its ground where a timid one bolts', () => {
+    const uneasy: Moods = { ...calm, fear: 0.3 };
+    const bold: Genes = { ...plain, boldness: 0.9 };
+    const timid: Genes = { ...plain, boldness: 0.1 };
+    expect(chooseState('wander', uneasy, bold, senses()).state).toBe('wander');
+    expect(chooseState('wander', uneasy, timid, senses()).state).toBe('flee');
+  });
+
+  it('a timid pip cowers where a bold one merely flees', () => {
+    const terrified: Moods = { ...calm, fear: 0.78 };
+    const bold: Genes = { ...plain, boldness: 0.9 };
+    const timid: Genes = { ...plain, boldness: 0.1 };
+    expect(chooseState('wander', terrified, timid, senses()).state).toBe('cower');
+    expect(chooseState('wander', terrified, bold, senses()).state).toBe('flee');
   });
 
   it('approaches out of curiosity', () => {
     const nosy: Moods = { ...calm, curiosity: 0.8 };
-    expect(chooseState('wander', nosy, senses({ dist: 200 })).state).toBe('curious');
+    expect(chooseState('wander', nosy, plain, senses({ dist: 200 })).state).toBe('curious');
+  });
+
+  it('an indifferent pip needs more of an itch to investigate', () => {
+    const itch: Moods = { ...calm, curiosity: 0.5 };
+    const indifferent: Genes = { ...plain, nosiness: 0.1 };
+    expect(chooseState('wander', itch, plain, senses({ dist: 200 })).state).toBe('curious');
+    expect(chooseState('wander', itch, indifferent, senses({ dist: 200 })).state).toBe('wander');
   });
 
   it('tags along only once trust is earned', () => {
     const moving = senses({ dist: 400, speed: 200 });
-    expect(chooseState('wander', { ...calm, trust: 0.7 }, moving).state).toBe('follow');
-    expect(chooseState('wander', { ...calm, trust: 0.4 }, moving).state).toBe('wander');
+    expect(chooseState('wander', { ...calm, trust: 0.7 }, plain, moving).state).toBe('follow');
+    expect(chooseState('wander', { ...calm, trust: 0.4 }, plain, moving).state).toBe('wander');
+  });
+
+  it('an aloof pip needs more trust to tag along', () => {
+    const moving = senses({ dist: 400, speed: 200 });
+    const fond: Moods = { ...calm, trust: 0.6 };
+    const clingy: Genes = { ...plain, clinginess: 0.9 };
+    const aloof: Genes = { ...plain, clinginess: 0.1 };
+    expect(chooseState('wander', fond, clingy, moving).state).toBe('follow');
+    expect(chooseState('wander', fond, aloof, moving).state).toBe('wander');
   });
 
   it('will not chase a watcher moving too fast to follow', () => {
     const racing = senses({ dist: 400, speed: 600 });
-    expect(chooseState('wander', { ...calm, trust: 0.7 }, racing).state).toBe('wander');
+    expect(chooseState('wander', { ...calm, trust: 0.7 }, plain, racing).state).toBe('wander');
   });
 
   it('does not chase a ghost', () => {
     const s = senses({ presence: 0.4, dist: 400, speed: 200 });
-    expect(chooseState('wander', { ...calm, trust: 0.7 }, s).state).toBe('wander');
+    expect(chooseState('wander', { ...calm, trust: 0.7 }, plain, s).state).toBe('wander');
   });
 
   it('snuggles only a trusted, gentle watcher', () => {
     const close = senses({ dist: 40 });
-    expect(chooseState('wander', { ...calm, trust: 0.8 }, close).state).toBe('snuggle');
-    expect(chooseState('wander', { ...calm, trust: 0.5 }, close).state).toBe('wander');
+    expect(chooseState('wander', { ...calm, trust: 0.8 }, plain, close).state).toBe('snuggle');
+    expect(chooseState('wander', { ...calm, trust: 0.5 }, plain, close).state).toBe('wander');
+  });
+
+  it('a clingy pip snuggles on thinner trust', () => {
+    const close = senses({ dist: 40 });
+    const fond: Moods = { ...calm, trust: 0.66 };
+    const clingy: Genes = { ...plain, clinginess: 0.9 };
+    expect(chooseState('wander', fond, clingy, close).state).toBe('snuggle');
+    expect(chooseState('wander', fond, plain, close).state).toBe('wander');
+  });
+
+  it('a lively pip stays up later', () => {
+    const idle = senses({ presence: 0, stillFor: 35 });
+    const zippy: Genes = { ...plain, liveliness: 1 };
+    expect(chooseState('wander', calm, zippy, idle).state).toBe('wander');
+    expect(chooseState('wander', calm, plain, idle).state).toBe('sleep');
   });
 
   it('does not snuggle a ghost', () => {
     const s = senses({ presence: 0.4, dist: 40 });
-    expect(chooseState('wander', { ...calm, trust: 0.8 }, s).state).toBe('wander');
+    expect(chooseState('wander', { ...calm, trust: 0.8 }, plain, s).state).toBe('wander');
   });
 
   it('trust shrinks its personal space', () => {
-    expect(personalSpace(1)).toBeLessThan(personalSpace(0));
+    expect(personalSpace(1, plain)).toBeLessThan(personalSpace(0, plain));
+  });
+
+  it('boldness shrinks it too', () => {
+    expect(personalSpace(0.5, { ...plain, boldness: 1 })).toBeLessThan(
+      personalSpace(0.5, { ...plain, boldness: 0 }),
+    );
   });
 });
