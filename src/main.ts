@@ -12,6 +12,7 @@ import {
   type Senses,
 } from './brain.ts';
 import { createInput } from './input.ts';
+import { loadSave, storeSave } from './save.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -89,7 +90,7 @@ const pip = {
   facing: 1,
   state: 'wander' as CritterState,
   stateTime: 0,
-  genes: descend(FOUNDER, 6),
+  genes: FOUNDER,
   moods: { fear: 0, curiosity: 0, trust: 0.5 } as Moods,
   wanderTarget: null as Vec | null,
   pauseFor: 0,
@@ -100,6 +101,21 @@ const pip = {
   quirkFor: 0,
   antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
 };
+
+// the same pip, and how far you got with it, survives the refresh
+const saved = loadSave();
+if (saved) {
+  pip.genes = saved.genes;
+  pip.moods.trust = saved.trust;
+} else {
+  pip.genes = descend(FOUNDER, 6);
+  storeSave(pip.genes, pip.moods.trust);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') storeSave(pip.genes, pip.moods.trust);
+});
+window.addEventListener('pagehide', () => storeSave(pip.genes, pip.moods.trust));
 
 function distToPointer(): number {
   return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
@@ -491,6 +507,7 @@ function updateHud(): void {
 
 let last = performance.now();
 let playedFor = 0;
+let sinceSave = 0;
 
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
@@ -498,6 +515,12 @@ function frame(now: number): void {
   const t = now / 1000;
 
   input.update(dt);
+
+  sinceSave += dt;
+  if (sinceSave >= 10) {
+    sinceSave = 0;
+    storeSave(pip.genes, pip.moods.trust);
+  }
 
   for (const k of input.takeKnocks()) {
     const before = pip.moods.fear;

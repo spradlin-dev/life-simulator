@@ -10,6 +10,19 @@ export interface Genes {
   light: number; // %
 }
 
+// every gene, checked complete at compile time: adding a field to Genes without
+// listing it here is a build error (save validation walks this list)
+const GENE_FIELD_SET: Record<keyof Genes, true> = {
+  boldness: true,
+  clinginess: true,
+  nosiness: true,
+  liveliness: true,
+  hue: true,
+  sat: true,
+  light: true,
+};
+export const GENE_FIELDS = Object.keys(GENE_FIELD_SET) as readonly (keyof Genes)[];
+
 // the original mint pip every lineage descends from
 export const FOUNDER: Genes = {
   boldness: 0.5,
@@ -28,17 +41,31 @@ const LIGHT_SIGMA = 3;
 
 const clampRange = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+// snap arbitrary numbers back into legal gene ranges — the single owner of what
+// values a gene may hold (mutation drift and save-loading both funnel through here)
+export function sanitizeGenes(g: Genes): Genes {
+  return {
+    boldness: clamp01(g.boldness),
+    clinginess: clamp01(g.clinginess),
+    nosiness: clamp01(g.nosiness),
+    liveliness: clamp01(g.liveliness),
+    hue: ((g.hue % 360) + 360) % 360,
+    sat: clampRange(g.sat, 35, 85),
+    light: clampRange(g.light, 48, 75),
+  };
+}
+
 // one generation of drift: usually barely noticeable, extremes asymptotically rare
 export function mutate(genes: Genes, rand: () => number = Math.random): Genes {
-  return {
-    boldness: clamp01(genes.boldness + gaussian(rand) * TRAIT_SIGMA),
-    clinginess: clamp01(genes.clinginess + gaussian(rand) * TRAIT_SIGMA),
-    nosiness: clamp01(genes.nosiness + gaussian(rand) * TRAIT_SIGMA),
-    liveliness: clamp01(genes.liveliness + gaussian(rand) * TRAIT_SIGMA),
-    hue: (((genes.hue + gaussian(rand) * HUE_SIGMA) % 360) + 360) % 360,
-    sat: clampRange(genes.sat + gaussian(rand) * SAT_SIGMA, 35, 85),
-    light: clampRange(genes.light + gaussian(rand) * LIGHT_SIGMA, 48, 75),
-  };
+  return sanitizeGenes({
+    boldness: genes.boldness + gaussian(rand) * TRAIT_SIGMA,
+    clinginess: genes.clinginess + gaussian(rand) * TRAIT_SIGMA,
+    nosiness: genes.nosiness + gaussian(rand) * TRAIT_SIGMA,
+    liveliness: genes.liveliness + gaussian(rand) * TRAIT_SIGMA,
+    hue: genes.hue + gaussian(rand) * HUE_SIGMA,
+    sat: genes.sat + gaussian(rand) * SAT_SIGMA,
+    light: genes.light + gaussian(rand) * LIGHT_SIGMA,
+  });
 }
 
 // a pip that walked in from an unseen short lineage

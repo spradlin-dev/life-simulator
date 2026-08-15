@@ -5,6 +5,9 @@ mobile. It wanders, gets curious about a watcher that holds still, follows
 one it trusts, flees sudden movement, and falls asleep when nothing happens.
 No goal — just watch a personality emerge from a few if-statements.
 
+Your pip is saved in your browser — the same individual, and how much
+it trusts you, will be there when you come back.
+
 Live at: https://spradlin-dev.github.io/life-simulator/
 
 ## Run it
