@@ -209,6 +209,26 @@ function mixColor(a: Rgb, b: Rgb, t: number): Rgb {
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }
 
+// the touch ghost, made visible: its opacity IS the presence value the brain sees
+function drawTouchGhost(): void {
+  if (pointer.kind !== 'touch' || pointer.presence <= 0) return;
+  const glow = ctx.createRadialGradient(pointer.x, pointer.y, 2, pointer.x, pointer.y, 26);
+  glow.addColorStop(0, 'rgba(180, 240, 220, 0.8)');
+  glow.addColorStop(1, 'rgba(180, 240, 220, 0)');
+  ctx.globalAlpha = pointer.presence * 0.35;
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(pointer.x, pointer.y, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = pointer.presence * 0.5;
+  ctx.strokeStyle = 'rgba(190, 235, 220, 0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(pointer.x, pointer.y, 18, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 function bodyColor(): string {
   const calm: Rgb = [111, 211, 176];
   const scared: Rgb = [154, 160, 214];
@@ -220,6 +240,8 @@ function bodyColor(): string {
 
 function draw(t: number): void {
   ctx.clearRect(0, 0, view.w, view.h);
+
+  drawTouchGhost();
 
   const speed = Math.hypot(pip.vx, pip.vy);
   const asleep = pip.state === 'sleep';

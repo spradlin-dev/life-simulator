@@ -8,6 +8,7 @@ export interface PointerSense {
   presence: number;
   speed: number;
   stillFor: number;
+  kind: 'mouse' | 'touch';
 }
 
 export interface Knock {
@@ -30,9 +31,15 @@ export interface Input {
 }
 
 export function createInput(): Input {
-  const state: PointerSense = { x: -9999, y: -9999, presence: 0, speed: 0, stillFor: 999 };
+  const state: PointerSense = {
+    x: -9999,
+    y: -9999,
+    presence: 0,
+    speed: 0,
+    stillFor: 999,
+    kind: 'mouse',
+  };
   let contact = false;
-  let contactKind: 'mouse' | 'touch' = 'mouse';
   let fadeRate = 1 / GHOST_FADE_S.mouse;
   let prev: { x: number; y: number } | null = null;
   let knocks: Knock[] = [];
@@ -40,16 +47,16 @@ export function createInput(): Input {
 
   function begin(e: PointerEvent): void {
     contact = true;
-    contactKind = e.pointerType === 'touch' ? 'touch' : 'mouse';
+    state.kind = e.pointerType === 'touch' ? 'touch' : 'mouse';
     state.x = e.clientX;
     state.y = e.clientY;
     state.presence = 1;
     prev = null; // no phantom lunge on (re)entry
   }
 
-  function release(kind: 'mouse' | 'touch'): void {
+  function release(): void {
     contact = false;
-    fadeRate = 1 / GHOST_FADE_S[kind];
+    fadeRate = 1 / GHOST_FADE_S[state.kind];
     prev = null;
   }
 
@@ -81,19 +88,19 @@ export function createInput(): Input {
       knocks.push({ x: e.clientX, y: e.clientY, strength: KNOCK_TAP });
     }
     touchStart = null;
-    release('touch');
+    release();
   });
 
   window.addEventListener('pointercancel', (e) => {
     if (!e.isPrimary) return;
     touchStart = null;
-    release(e.pointerType === 'touch' ? 'touch' : 'mouse');
+    release();
   });
 
-  document.addEventListener('mouseleave', () => release('mouse'));
+  document.addEventListener('mouseleave', () => release());
   window.addEventListener('blur', () => {
     touchStart = null;
-    release(contactKind);
+    release();
   });
   if (matchMedia('(pointer: coarse)').matches) {
     window.addEventListener('contextmenu', (e) => e.preventDefault());
