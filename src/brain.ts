@@ -1,5 +1,6 @@
 import { clamp01, lerp } from './math.ts';
 import type { Genes } from './genes.ts';
+import type { Needs } from './needs.ts';
 
 export type CritterState =
   | 'wander'
@@ -8,6 +9,7 @@ export type CritterState =
   | 'flee'
   | 'cower'
   | 'snuggle'
+  | 'snack'
   | 'sleep';
 
 export interface Moods {
@@ -21,6 +23,7 @@ export interface Senses {
   dist: number;
   speed: number;
   stillFor: number;
+  treatDist: number; // Infinity when no treat is down
 }
 
 export interface Decision {
@@ -63,15 +66,17 @@ function menace(senses: Senses): number {
 }
 
 export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: number): Moods {
-  const { presence, dist, speed } = senses;
+  const { presence, dist, speed, stillFor } = senses;
   const threat = menace(senses) * lerp(1.3, 0.7, genes.boldness);
 
   let fear = clamp01(moods.fear + threat * dt * 5);
   fear = clamp01(fear - dt * (0.1 + 0.15 * moods.trust));
 
-  // a watcher sitting still nearby is interesting — even the fading ghost of one
+  // a watcher sitting still nearby is interesting — even the fading ghost of one —
+  // but a statue that never moves at all fades from attention (a parked cursor
+  // at the screen edge must not farm curiosity or trust)
   let curiosity: number;
-  if (presence > 0 && dist < 480 && speed < 50 && fear < 0.2) {
+  if (presence > 0 && dist < 480 && speed < 50 && fear < 0.2 && stillFor < 20) {
     curiosity = clamp01(moods.curiosity + dt * 0.28 * presence * lerp(0.6, 1.4, genes.nosiness));
   } else {
     curiosity = clamp01(moods.curiosity - dt * 0.2);
@@ -79,7 +84,7 @@ export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: numb
 
   // trust grows only while the watcher is mostly there — never from a faded ghost
   let trust = clamp01(moods.trust - threat * dt * 0.12);
-  if (presence > 0.5 && dist < 180 && fear < 0.1 && speed < 160) {
+  if (presence > 0.5 && dist < 180 && fear < 0.1 && speed < 160 && stillFor < 20) {
     trust = clamp01(trust + dt * 0.015 * lerp(0.6, 1.4, genes.clinginess));
   }
 
@@ -90,16 +95,22 @@ export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: numb
 // Genes bend each threshold, so every individual draws its lines differently;
 // a 0.5 gene sits exactly at the original tuning.
 // The sleep→wake branch is the one place this also changes moods (the rude-awakening startle).
-export function chooseState(current: CritterState, moods: Moods, genes: Genes, senses: Senses): Decision {
-  const { presence, dist, speed, stillFor } = senses;
+export function chooseState(
+  current: CritterState,
+  moods: Moods,
+  needs: Needs,
+  genes: Genes,
+  senses: Senses,
+): Decision {
+  const { presence, dist, speed, stillFor, treatDist } = senses;
   const decide = (state: CritterState, next = moods, startled = false): Decision => ({
     state,
     moods: next,
     startled,
   });
 
-  // this individual's character sheet
-  const fleesAt = lerp(0.16, 0.4, genes.boldness);
+  // this individual's character sheet (an empty belly makes anyone braver)
+  const fleesAt = lerp(0.16, 0.4, genes.boldness) + (1 - needs.food) * 0.06;
   const cowersAt = lerp(0.65, 0.85, genes.boldness);
   const sleepsAfter = lerp(20, 40, genes.liveliness);
   const snugglesAt = lerp(0.82, 0.62, genes.clinginess);
@@ -110,11 +121,18 @@ export function chooseState(current: CritterState, moods: Moods, genes: Genes, s
   if (moods.fear > fleesAt) return decide('flee');
 
   if (current === 'sleep') {
-    const disturbed = presence > 0.6 && (dist < 160 || speed > 450);
-    if (!disturbed) return decide('sleep');
-    return decide('wander', startle(moods, genes, dist, 0.4), true);
+    // exhausted sleep is deep sleep: proximity can't break it (a real scare still
+    // does — the fear checks above outrank sleep entirely)
+    const disturbed = needs.rest >= 0.15 && presence > 0.6 && (dist < 160 || speed > 450);
+    if (disturbed) return decide('wander', startle(moods, genes, dist, 0.4), true);
+    // rested pips only get up if something is happening; an alone pip sleeps on
+    if (needs.rest > 0.95 && stillFor <= sleepsAfter) return decide('wander');
+    return decide('sleep');
   }
+  if (needs.rest < 0.15) return decide('sleep');
   if (stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
+
+  if (treatDist < 480 && needs.food < 0.85) return decide('snack');
 
   if (presence <= 0) return decide('wander');
   if (dist < personalSpace(moods.trust, genes) + 30 && moods.trust > snugglesAt && speed < 70 && presence > 0.5) {

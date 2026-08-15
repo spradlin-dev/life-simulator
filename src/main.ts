@@ -11,6 +11,7 @@ import {
   type Moods,
   type Senses,
 } from './brain.ts';
+import { eat, FRESH_NEEDS, happinessOf, tickNeeds, type Needs } from './needs.ts';
 import { createInput } from './input.ts';
 import { loadSave, storeSave } from './save.ts';
 
@@ -22,6 +23,14 @@ const hint = document.getElementById('hint') as HTMLDivElement;
 // logical viewport in CSS px; the canvas backing store is scaled to the device
 const view = { w: 0, h: 0 };
 
+interface Treat {
+  x: number;
+  y: number;
+  age: number;
+}
+
+const treats: Treat[] = [];
+
 function resize(): void {
   const dpr = window.devicePixelRatio || 1;
   view.w = window.innerWidth;
@@ -29,6 +38,10 @@ function resize(): void {
   canvas.width = Math.round(view.w * dpr);
   canvas.height = Math.round(view.h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  for (const treat of treats) {
+    treat.x = Math.min(view.w - 30, Math.max(30, treat.x));
+    treat.y = Math.min(view.h - 30, Math.max(30, treat.y));
+  }
 }
 window.addEventListener('resize', resize);
 resize();
@@ -40,14 +53,18 @@ if (matchMedia('(pointer: coarse)').matches) {
   hint.textContent = 'touch gently — press and hold, and it may come see you.';
 }
 
-// update toast: taps on it are UI, not knocks on the glass
+// UI elements swallow pointerdown/move so touching them never knocks the glass,
+// but pointerup passes through: a canvas-started drag ending on UI must still
+// release touch contact
+function shieldFromWorld(el: HTMLElement): void {
+  for (const type of ['pointerdown', 'pointermove'] as const) {
+    el.addEventListener(type, (e) => e.stopPropagation());
+  }
+}
+
 const toast = document.getElementById('toast') as HTMLDivElement;
 const toastReload = document.getElementById('toast-reload') as HTMLButtonElement;
-// pointerup deliberately passes through: a canvas-started drag that ends on the
-// toast must still release touch contact (a toast-started tap can't knock anyway)
-for (const type of ['pointerdown', 'pointermove'] as const) {
-  toast.addEventListener(type, (e) => e.stopPropagation());
-}
+shieldFromWorld(toast);
 const updateSW = registerSW({
   onNeedRefresh() {
     toast.hidden = false;
@@ -64,6 +81,49 @@ const updateSW = registerSW({
   },
 });
 toastReload.addEventListener('click', () => void updateSW(true));
+
+// ------------------------------------------------------------------ treats
+
+const TREAT_LIFE = 60;
+const TREAT_CAP = 3;
+let treatArmed = false;
+
+const treatButton = document.getElementById('treat-button') as HTMLButtonElement;
+shieldFromWorld(treatButton);
+treatButton.addEventListener('click', () => {
+  if (treats.length >= TREAT_CAP) return;
+  treatArmed = !treatArmed;
+  document.body.classList.toggle('treat-armed', treatArmed);
+});
+
+function dropTreat(x: number, y: number): void {
+  if (treats.length >= TREAT_CAP) return;
+  // keep treats where the pip can physically reach them
+  treats.push({
+    x: Math.min(view.w - 30, Math.max(30, x)),
+    y: Math.min(view.h - 30, Math.max(30, y)),
+    age: 0,
+  });
+  treatArmed = false;
+  document.body.classList.remove('treat-armed');
+}
+
+function updateTreats(dt: number): void {
+  for (let i = treats.length - 1; i >= 0; i--) {
+    treats[i].age += dt;
+    if (treats[i].age > TREAT_LIFE) treats.splice(i, 1);
+  }
+  treatButton.disabled = treats.length >= TREAT_CAP;
+}
+
+function nearestTreat(): { treat: Treat; dist: number } | null {
+  let best: { treat: Treat; dist: number } | null = null;
+  for (const treat of treats) {
+    const dist = Math.hypot(treat.x - pip.x, treat.y - pip.y);
+    if (!best || dist < best.dist) best = { treat, dist };
+  }
+  return best;
+}
 
 // ------------------------------------------------------------------ the critter
 
@@ -92,6 +152,7 @@ const pip = {
   stateTime: 0,
   genes: FOUNDER,
   moods: { fear: 0, curiosity: 0, trust: 0.5 } as Moods,
+  needs: { ...FRESH_NEEDS } as Needs,
   wanderTarget: null as Vec | null,
   pauseFor: 0,
   blinkIn: 2,
@@ -99,6 +160,8 @@ const pip = {
   emoteFor: 0,
   quirk: null as Quirk | null,
   quirkFor: 0,
+  munchFor: 0,
+  munchTarget: null as Treat | null,
   antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
 };
 
@@ -107,26 +170,46 @@ const saved = loadSave();
 if (saved) {
   pip.genes = saved.genes;
   pip.moods.trust = saved.trust;
+  pip.needs = saved.needs;
+  if (saved.pos) {
+    pip.x = Math.min(view.w - 26, Math.max(26, saved.pos.x));
+    pip.y = Math.min(view.h - 26, Math.max(26, saved.pos.y));
+    pip.antenna.x = pip.x;
+    pip.antenna.y = pip.y - 42;
+  }
 } else {
   pip.genes = descend(FOUNDER, 6);
-  storeSave(pip.genes, pip.moods.trust);
+  storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') storeSave(pip.genes, pip.moods.trust);
+  if (document.visibilityState === 'hidden') {
+    storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
+  }
 });
-window.addEventListener('pagehide', () => storeSave(pip.genes, pip.moods.trust));
+window.addEventListener('pagehide', () =>
+  storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y }),
+);
+
+let happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
+
+// 0 content … 1 utterly miserable; drives the visible sulk
+function sulk(): number {
+  return happiness < 0.35 ? 1 - happiness / 0.35 : 0;
+}
 
 function distToPointer(): number {
   return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
 }
 
 function currentSenses(): Senses {
+  const treat = nearestTreat();
   return {
     presence: pointer.presence,
     dist: distToPointer(),
     speed: pointer.speed,
     stillFor: pointer.stillFor,
+    treatDist: treat ? treat.dist : Infinity,
   };
 }
 
@@ -142,7 +225,7 @@ function showEmote(symbol: string): void {
 // ------------------------------------------------------------------ movement
 
 function steerToward(tx: number, ty: number, accel: number, maxSpeed: number, dt: number): void {
-  const zip = lerp(0.85, 1.15, pip.genes.liveliness);
+  const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulk());
   const a = accel * zip;
   const cap = maxSpeed * zip;
   const dx = tx - pip.x;
@@ -218,6 +301,34 @@ function act(dt: number, t: number): void {
       if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote('♥');
       break;
     }
+    case 'snack': {
+      const target = nearestTreat();
+      if (!target) {
+        pip.munchTarget = null;
+        settle(dt, 4);
+        break;
+      }
+      if (target.treat !== pip.munchTarget) {
+        pip.munchTarget = target.treat;
+        pip.munchFor = 0;
+      }
+      if (target.dist > 18) {
+        pip.munchFor = 0;
+        steerToward(target.treat.x, target.treat.y, 320, 130, dt);
+      } else {
+        settle(dt, 8);
+        pip.munchFor += dt;
+        if (pip.munchFor >= 1.2) {
+          treats.splice(treats.indexOf(target.treat), 1);
+          pip.needs = eat(pip.needs);
+          pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
+          pip.munchFor = 0;
+          pip.munchTarget = null;
+          showEmote('♥');
+        }
+      }
+      break;
+    }
     case 'sleep':
       settle(dt, 3);
       if (pip.emoteFor <= 0 && Math.random() < dt / 3) showEmote('z');
@@ -245,8 +356,9 @@ function act(dt: number, t: number): void {
 
 function updateAntenna(dt: number): void {
   const a = pip.antenna;
+  const droop = sulk() * 14;
   a.vx += (pip.x - pip.facing * 4 - a.x) * 60 * dt;
-  a.vy += (pip.y - 42 - a.y) * 60 * dt;
+  a.vy += (pip.y - 42 + droop - a.y) * 60 * dt;
   a.vx *= Math.max(0, 1 - 6 * dt);
   a.vy *= Math.max(0, 1 - 6 * dt);
   a.x += a.vx * dt;
@@ -281,6 +393,11 @@ function updateTimers(dt: number): void {
   } else {
     maybeStartQuirk(dt);
   }
+  // a hungry pip thinks about berries; a miserable one trails off
+  if (pip.emoteFor <= 0 && pip.state !== 'sleep') {
+    if (pip.needs.food < 0.3 && Math.random() < dt / 6) showEmote('●');
+    else if (sulk() > 0.5 && Math.random() < dt / 8) showEmote('…');
+  }
 }
 
 // ------------------------------------------------------------------ drawing
@@ -305,13 +422,34 @@ function drawTouchGhost(): void {
   ctx.globalAlpha = 1;
 }
 
-// genetic base color with relative mood tinting: fear cools and washes out, snuggling warms
+function drawTreats(t: number): void {
+  for (const treat of treats) {
+    const pop = Math.min(1, treat.age / 0.3);
+    const fade = Math.min(1, (TREAT_LIFE - treat.age) / 5);
+    const r = 5 * Math.sin(pop * Math.PI * 0.5);
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = '#e05c6e';
+    ctx.beginPath();
+    ctx.arc(treat.x, treat.y + Math.sin(t * 3 + treat.x) * 1.2, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#7fce9a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(treat.x, treat.y - r + Math.sin(t * 3 + treat.x) * 1.2);
+    ctx.lineTo(treat.x + 3, treat.y - r - 4 + Math.sin(t * 3 + treat.x) * 1.2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// genetic base color with relative mood tinting: fear cools and washes out,
+// snuggling warms, misery grays everything down
 function bodyColor(): string {
   const g = pip.genes;
   const fear = pip.moods.fear;
   let h = hueShift(g.hue, 250, fear * 0.4);
-  let s = g.sat * (1 - fear * 0.35);
-  const l = g.light + fear * 5;
+  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulk());
+  const l = g.light + fear * 5 - sulk() * 4;
   if (pip.state === 'snuggle') {
     h = hueShift(h, 30, 0.35);
     s = Math.min(90, s + 12);
@@ -319,10 +457,13 @@ function bodyColor(): string {
   return `hsl(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%)`;
 }
 
+const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e' };
+
 function draw(t: number): void {
   ctx.clearRect(0, 0, view.w, view.h);
 
   drawTouchGhost();
+  drawTreats(t);
 
   const speed = Math.hypot(pip.vx, pip.vy);
   const asleep = pip.state === 'sleep';
@@ -359,6 +500,10 @@ function draw(t: number): void {
         throw new Error(`unhandled quirk: ${String(unhandled)}`);
       }
     }
+  }
+  // munching: happy little chews
+  if (pip.state === 'snack' && pip.munchFor > 0) {
+    mouthOpen = Math.abs(Math.sin(pip.munchFor * Math.PI * 4)) * 0.6;
   }
 
   const bob = asleep
@@ -420,6 +565,14 @@ function draw(t: number): void {
     lookX = Math.cos(a) * 2.8;
     lookY = Math.sin(a) * 2.8;
   }
+  if (pip.state === 'snack') {
+    const target = nearestTreat();
+    if (target) {
+      const a = Math.atan2(target.treat.y - y, target.treat.x - x);
+      lookX = Math.cos(a) * 2.8;
+      lookY = Math.sin(a) * 2.8;
+    }
+  }
   if (sweepLook !== null) {
     lookX = sweepLook;
     lookY = 0;
@@ -446,7 +599,7 @@ function draw(t: number): void {
     ctx.fill();
   }
 
-  // yawning mouth
+  // mouth (yawns and munching)
   if (mouthOpen > 0.05) {
     ctx.fillStyle = '#1c2733';
     ctx.beginPath();
@@ -460,7 +613,7 @@ function draw(t: number): void {
     ctx.globalAlpha = Math.min(1, pip.emoteFor / 0.4);
     ctx.font = '16px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillStyle = pip.emote === '♥' ? '#ff8fa3' : '#dfe8f0';
+    ctx.fillStyle = EMOTE_COLORS[pip.emote] ?? '#dfe8f0';
     ctx.fillText(pip.emote, x + 16, y - R - 14 - rise);
     ctx.globalAlpha = 1;
   }
@@ -475,6 +628,7 @@ const MOOD_LABELS: Record<CritterState, string> = {
   flee: 'nope nope nope',
   cower: 'too scared to move',
   snuggle: 'happy near you',
+  snack: 'munch munch',
   sleep: 'fast asleep',
 };
 
@@ -500,9 +654,13 @@ function updateHud(): void {
   hud.textContent =
     `pip: ${MOOD_LABELS[pip.state]}\n` +
     `nature    ${natureLabel(pip.genes)}\n` +
+    `mood      ${meter(happiness)}\n` +
     `trust     ${meter(pip.moods.trust)}\n` +
     `fear      ${meter(pip.moods.fear)}\n` +
-    `curiosity ${meter(pip.moods.curiosity)}`;
+    `curiosity ${meter(pip.moods.curiosity)}\n` +
+    `food      ${meter(pip.needs.food)}\n` +
+    `rest      ${meter(pip.needs.rest)}\n` +
+    `fun       ${meter(pip.needs.fun)}`;
 }
 
 let last = performance.now();
@@ -515,14 +673,19 @@ function frame(now: number): void {
   const t = now / 1000;
 
   input.update(dt);
+  updateTreats(dt);
 
   sinceSave += dt;
   if (sinceSave >= 10) {
     sinceSave = 0;
-    storeSave(pip.genes, pip.moods.trust);
+    storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
   }
 
   for (const k of input.takeKnocks()) {
+    if (treatArmed) {
+      dropTreat(k.x, k.y);
+      break; // discard this frame's remaining knocks — feeding intent shouldn't startle
+    }
     const before = pip.moods.fear;
     pip.moods = knock(pip.moods, pip.genes, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
     if (pip.moods.fear > before) showEmote('!');
@@ -533,14 +696,19 @@ function frame(now: number): void {
   pip.moods = updateMoods(pip.moods, pip.genes, senses, dt);
   if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote('!');
 
-  const decision = chooseState(pip.state, pip.moods, pip.genes, senses);
+  const decision = chooseState(pip.state, pip.moods, pip.needs, pip.genes, senses);
   pip.moods = decision.moods;
   if (decision.startled) showEmote('!');
   if (decision.state !== pip.state) {
     pip.state = decision.state;
     pip.stateTime = 0;
+    pip.munchFor = 0;
+    pip.munchTarget = null;
   }
   pip.stateTime += dt;
+
+  pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt);
+  happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
 
   act(dt, t);
   updateAntenna(dt);

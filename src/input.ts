@@ -98,6 +98,11 @@ export function createInput(): Input {
   });
 
   document.addEventListener('mouseleave', () => release());
+  // leaving the window sometimes skips mouseleave; mouseout with no relatedTarget
+  // is the robust exit signal
+  document.addEventListener('mouseout', (e) => {
+    if (e.relatedTarget === null) release();
+  });
   window.addEventListener('blur', () => {
     touchStart = null;
     release();

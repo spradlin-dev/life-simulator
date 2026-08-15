@@ -86,3 +86,31 @@ body {
   padding: 4px 12px;
   cursor: pointer;
 }
+
+#treat-button {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid #3a5c50;
+  background: #16222e;
+  color: #e05c6e;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+#treat-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+body.treat-armed #treat-button {
+  border-color: #e05c6e;
+  box-shadow: 0 0 10px rgba(224, 92, 110, 0.5);
+}
+
+body.treat-armed #world {
+  cursor: copy;
+}
