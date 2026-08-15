@@ -10,6 +10,7 @@ import {
 } from './brain.ts';
 import type { Genes } from './genes.ts';
 import { FRESH_NEEDS, type Needs } from './needs.ts';
+import { effectiveGenes } from './dispositions.ts';
 
 const calm: Moods = { fear: 0, curiosity: 0, trust: 0.5 };
 const fed: Needs = FRESH_NEEDS;
@@ -32,6 +33,7 @@ function senses(overrides: Partial<Senses> = {}): Senses {
     speed: 0,
     stillFor: 0,
     treatDist: Infinity,
+    place: 0,
     ...overrides,
   };
 }
@@ -80,6 +82,38 @@ describe('moods', () => {
   it('a statue stops earning trust', () => {
     const parked = senses({ dist: 100, stillFor: 30 });
     expect(runMoods(calm, parked, 5).trust).toBe(calm.trust);
+  });
+
+  it('dreaded ground makes the skin crawl', () => {
+    const badPlace = senses({ presence: 0, place: -0.8 });
+    const fine = senses({ presence: 0 });
+    expect(runMoods(calm, badPlace, 5).fear).toBeGreaterThan(runMoods(calm, fine, 5).fear);
+  });
+
+  it('dread only ever raises fear, never soothes a terrified pip', () => {
+    const terrified: Moods = { ...calm, fear: 0.9 };
+    const onDread = runMoods(terrified, senses({ presence: 0, place: -0.4 }), 1);
+    const offDread = runMoods(terrified, senses({ presence: 0 }), 1);
+    expect(onDread.fear).toBeGreaterThanOrEqual(offDread.fear);
+  });
+
+  it('dread cannot overshoot its floor even in one giant time step', () => {
+    const after = updateMoods(calm, plain, senses({ presence: 0, place: -1 }), 10);
+    expect(after.fear).toBeLessThanOrEqual(0.6);
+  });
+
+  it('beloved ground soothes faster than neutral ground', () => {
+    const shaken: Moods = { ...calm, fear: 0.5 };
+    const home = runMoods(shaken, senses({ presence: 0, place: 0.9 }), 2);
+    const nowhere = runMoods(shaken, senses({ presence: 0 }), 2);
+    expect(home.fear).toBeLessThan(nowhere.fear);
+  });
+
+  it('a once-scarred pip startles at what a fresh pip shrugs off', () => {
+    const scarred = effectiveGenes(plain, { wariness: 0.8, attachment: 0 });
+    expect(startle(calm, scarred, 250, 0.5).fear).toBeGreaterThan(
+      startle(calm, plain, 250, 0.5).fear,
+    );
   });
 
   it('curiosity about a statue wears off instead of building', () => {

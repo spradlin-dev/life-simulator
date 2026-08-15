@@ -24,6 +24,7 @@ export interface Senses {
   speed: number;
   stillFor: number;
   treatDist: number; // Infinity when no treat is down
+  place: number; // memory of the ground it stands on: -1 dreaded … +1 beloved
 }
 
 export interface Decision {
@@ -66,11 +67,18 @@ function menace(senses: Senses): number {
 }
 
 export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: number): Moods {
-  const { presence, dist, speed, stillFor } = senses;
+  const { presence, dist, speed, stillFor, place } = senses;
   const threat = menace(senses) * lerp(1.3, 0.7, genes.boldness);
+  const dreadHere = Math.max(0, -place);
+  const comfortHere = Math.max(0, place);
 
   let fear = clamp01(moods.fear + threat * dt * 5);
-  fear = clamp01(fear - dt * (0.1 + 0.15 * moods.trust));
+  // beloved ground soothes: fear drains faster on it
+  fear = clamp01(fear - dt * (0.1 + 0.15 * moods.trust + comfortHere * 0.1));
+  // dreaded ground drags fear up toward a floor — deep memories push past the
+  // flee threshold, so the place itself repels. the coefficient clamp keeps
+  // this a convex step for ANY dt, so dread can never overshoot its floor
+  fear = clamp01(fear + Math.max(0, dreadHere * 0.6 - fear) * Math.min(1, dt * 0.6));
 
   // a watcher sitting still nearby is interesting — even the fading ghost of one —
   // but a statue that never moves at all fades from attention (a parked cursor

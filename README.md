@@ -8,6 +8,11 @@ No goal — just watch a personality emerge from a few if-statements.
 Your pip is saved in your browser — the same individual, and how much
 it trusts you, will be there when you come back.
 
+It remembers. Scares leave lasting marks on its temperament and on the
+places where they happened; warmth — treats, snuggles, good days —
+slowly writes over them. A patient keeper can rehabilitate a scarred
+pip, and every pip ends up with favorite corners.
+
 Live at: https://spradlin-dev.github.io/life-simulator/
 
 ## Run it

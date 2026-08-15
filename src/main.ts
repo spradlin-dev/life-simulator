@@ -12,6 +12,16 @@ import {
   type Senses,
 } from './brain.ts';
 import { eat, FRESH_NEEDS, happinessOf, tickNeeds, type Needs } from './needs.ts';
+import {
+  effectiveGenes,
+  fadePlaces,
+  FRESH_DISPOSITIONS,
+  freshPlaces,
+  learn,
+  markPlace,
+  placeAt,
+  type Dispositions,
+} from './dispositions.ts';
 import { createInput } from './input.ts';
 import { loadSave, storeSave } from './save.ts';
 
@@ -153,6 +163,8 @@ const pip = {
   genes: FOUNDER,
   moods: { fear: 0, curiosity: 0, trust: 0.5 } as Moods,
   needs: { ...FRESH_NEEDS } as Needs,
+  disp: { ...FRESH_DISPOSITIONS } as Dispositions,
+  places: freshPlaces(),
   wanderTarget: null as Vec | null,
   pauseFor: 0,
   blinkIn: 2,
@@ -165,12 +177,25 @@ const pip = {
   antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
 };
 
+function snapshotPip() {
+  return {
+    genes: pip.genes,
+    trust: pip.moods.trust,
+    needs: pip.needs,
+    pos: { x: pip.x, y: pip.y },
+    disp: pip.disp,
+    places: pip.places,
+  };
+}
+
 // the same pip, and how far you got with it, survives the refresh
 const saved = loadSave();
 if (saved) {
   pip.genes = saved.genes;
   pip.moods.trust = saved.trust;
   pip.needs = saved.needs;
+  pip.disp = saved.disp;
+  pip.places = saved.places;
   if (saved.pos) {
     pip.x = Math.min(view.w - 26, Math.max(26, saved.pos.x));
     pip.y = Math.min(view.h - 26, Math.max(26, saved.pos.y));
@@ -179,17 +204,13 @@ if (saved) {
   }
 } else {
   pip.genes = descend(FOUNDER, 6);
-  storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
+  storeSave(snapshotPip());
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') {
-    storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
-  }
+  if (document.visibilityState === 'hidden') storeSave(snapshotPip());
 });
-window.addEventListener('pagehide', () =>
-  storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y }),
-);
+window.addEventListener('pagehide', () => storeSave(snapshotPip()));
 
 let happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
 
@@ -210,11 +231,12 @@ function currentSenses(): Senses {
     speed: pointer.speed,
     stillFor: pointer.stillFor,
     treatDist: treat ? treat.dist : Infinity,
+    place: placeAt(pip.places, pip.x / view.w, pip.y / view.h),
   };
 }
 
-function space(): number {
-  return personalSpace(pip.moods.trust, pip.genes);
+function space(expressed: Genes): number {
+  return personalSpace(pip.moods.trust, expressed);
 }
 
 function showEmote(symbol: string): void {
@@ -248,7 +270,7 @@ function settle(dt: number, rate: number): void {
   pip.vy *= k;
 }
 
-function act(dt: number, t: number): void {
+function act(dt: number, t: number, expressed: Genes): void {
   const dist = distToPointer();
 
   switch (pip.state) {
@@ -260,10 +282,22 @@ function act(dt: number, t: number): void {
       }
       let wt = pip.wanderTarget;
       if (!wt || Math.hypot(wt.x - pip.x, wt.y - pip.y) < 20) {
-        wt = {
+        // sample a few spots and prefer the fondest-remembered ground
+        const roll = (): Vec => ({
           x: 60 + Math.random() * Math.max(0, view.w - 120),
           y: 60 + Math.random() * Math.max(0, view.h - 120),
-        };
+        });
+        let pick = roll();
+        let bestFeel = placeAt(pip.places, pick.x / view.w, pick.y / view.h);
+        for (let i = 0; i < 3; i++) {
+          const cand = roll();
+          const feel = placeAt(pip.places, cand.x / view.w, cand.y / view.h);
+          if (feel > bestFeel) {
+            bestFeel = feel;
+            pick = cand;
+          }
+        }
+        wt = pick;
         pip.wanderTarget = wt;
         if (Math.random() < 0.4) pip.pauseFor = 1 + Math.random() * 2.5;
       }
@@ -273,13 +307,13 @@ function act(dt: number, t: number): void {
     case 'curious': {
       // creeps closer in fits and starts, stopping at a respectful distance
       const stepping = Math.sin(pip.stateTime * 2.4) > -0.2;
-      if (dist > space() && stepping) steerToward(pointer.x, pointer.y, 260, 75, dt);
+      if (dist > space(expressed) && stepping) steerToward(pointer.x, pointer.y, 260, 75, dt);
       else settle(dt, 5);
       if (pip.stateTime < 0.05) showEmote('?');
       break;
     }
     case 'follow': {
-      if (dist > space() + 26) steerToward(pointer.x, pointer.y, 500, 210, dt);
+      if (dist > space(expressed) + 26) steerToward(pointer.x, pointer.y, 500, 210, dt);
       else settle(dt, 4);
       break;
     }
@@ -296,9 +330,11 @@ function act(dt: number, t: number): void {
       settle(dt, 10);
       break;
     case 'snuggle': {
-      if (dist > space() * 0.8) steerToward(pointer.x, pointer.y, 120, 40, dt);
+      if (dist > space(expressed) * 0.8) steerToward(pointer.x, pointer.y, 120, 40, dt);
       else settle(dt, 3);
       if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote('♥');
+      // shared warmth suffuses the spot itself
+      pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, dt * 0.012);
       break;
     }
     case 'snack': {
@@ -319,6 +355,8 @@ function act(dt: number, t: number): void {
         settle(dt, 8);
         pip.munchFor += dt;
         if (pip.munchFor >= 1.2) {
+          // a good meal warms the memory of where it happened
+          pip.places = markPlace(pip.places, target.treat.x / view.w, target.treat.y / view.h, 0.2);
           treats.splice(treats.indexOf(target.treat), 1);
           pip.needs = eat(pip.needs);
           pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
@@ -645,6 +683,16 @@ function natureLabel(g: Genes): string {
   return parts.length ? parts.join(', ') : 'even-tempered';
 }
 
+// what life has made of it, appended to what it was born as
+function temperSuffix(d: Dispositions): string {
+  const parts: string[] = [];
+  if (d.wariness > 0.7) parts.push('scarred');
+  else if (d.wariness > 0.4) parts.push('wary');
+  if (d.attachment > 0.7) parts.push('devoted');
+  else if (d.attachment > 0.4) parts.push('fond');
+  return parts.length ? ' · ' + parts.join(', ') : '';
+}
+
 function meter(v: number): string {
   const n = Math.round(clamp01(v) * 8);
   return '▰'.repeat(n) + '▱'.repeat(8 - n);
@@ -653,7 +701,7 @@ function meter(v: number): string {
 function updateHud(): void {
   hud.textContent =
     `pip: ${MOOD_LABELS[pip.state]}\n` +
-    `nature    ${natureLabel(pip.genes)}\n` +
+    `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp)}\n` +
     `mood      ${meter(happiness)}\n` +
     `trust     ${meter(pip.moods.trust)}\n` +
     `fear      ${meter(pip.moods.fear)}\n` +
@@ -678,8 +726,11 @@ function frame(now: number): void {
   sinceSave += dt;
   if (sinceSave >= 10) {
     sinceSave = 0;
-    storeSave(pip.genes, pip.moods.trust, pip.needs, { x: pip.x, y: pip.y });
+    storeSave(snapshotPip());
   }
+
+  const fearAtFrameStart = pip.moods.fear;
+  const expressed = effectiveGenes(pip.genes, pip.disp);
 
   for (const k of input.takeKnocks()) {
     if (treatArmed) {
@@ -687,16 +738,16 @@ function frame(now: number): void {
       break; // discard this frame's remaining knocks — feeding intent shouldn't startle
     }
     const before = pip.moods.fear;
-    pip.moods = knock(pip.moods, pip.genes, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
+    pip.moods = knock(pip.moods, expressed, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
     if (pip.moods.fear > before) showEmote('!');
   }
 
   const senses = currentSenses();
   const beforeFear = pip.moods.fear;
-  pip.moods = updateMoods(pip.moods, pip.genes, senses, dt);
+  pip.moods = updateMoods(pip.moods, expressed, senses, dt);
   if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote('!');
 
-  const decision = chooseState(pip.state, pip.moods, pip.needs, pip.genes, senses);
+  const decision = chooseState(pip.state, pip.moods, pip.needs, expressed, senses);
   pip.moods = decision.moods;
   if (decision.startled) showEmote('!');
   if (decision.state !== pip.state) {
@@ -710,7 +761,14 @@ function frame(now: number): void {
   pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt);
   happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
 
-  act(dt, t);
+  // terror leaves marks: on the self, and on the place where it happened
+  pip.disp = learn(pip.disp, pip.moods.fear, happiness, dt);
+  pip.places = fadePlaces(pip.places, dt);
+  if (pip.moods.fear > 0.6 && fearAtFrameStart <= 0.6) {
+    pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, -0.34);
+  }
+
+  act(dt, t, expressed);
   updateAntenna(dt);
   updateTimers(dt);
   draw(t);

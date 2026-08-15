@@ -1,23 +1,38 @@
 import { clamp01 } from './math.ts';
 import { GENE_FIELDS, sanitizeGenes, type Genes } from './genes.ts';
 import { FRESH_NEEDS, NEED_FIELDS, type Needs } from './needs.ts';
+import {
+  DISP_FIELDS,
+  clampPlace,
+  FRESH_DISPOSITIONS,
+  freshPlaces,
+  PLACE_CELLS,
+  type Dispositions,
+} from './dispositions.ts';
+
+// what the running game hands the save layer every time it persists
+export interface LiveState {
+  genes: Genes;
+  trust: number;
+  needs: Needs;
+  pos: { x: number; y: number };
+  disp: Dispositions;
+  places: readonly number[];
+}
 
 export interface SaveData {
   genes: Genes;
   trust: number;
   needs: Needs;
   pos: { x: number; y: number } | null;
+  disp: Dispositions;
+  places: number[];
 }
 
 const KEY = 'pip-save';
 
-export function serialize(
-  genes: Genes,
-  trust: number,
-  needs: Needs,
-  pos: { x: number; y: number },
-): string {
-  return JSON.stringify({ v: 2, genes, trust, needs, pos });
+export function serialize(state: LiveState): string {
+  return JSON.stringify({ v: 3, ...state });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -37,9 +52,9 @@ export function parseSave(raw: string): SaveData | null {
   }
   if (typeof data !== 'object' || data === null) return null;
   const d = data as Record<string, unknown>;
-  // known versions migrate forward (v1 predates needs); unknown versions reject.
-  // future versions must keep MIGRATING old saves — a pip must never be lost to an upgrade
-  if (d.v !== 1 && d.v !== 2) return null;
+  // known versions migrate forward (v1 predates needs/pos, v2 predates memories);
+  // future versions must keep MIGRATING — a pip must never be lost to an upgrade
+  if (d.v !== 1 && d.v !== 2 && d.v !== 3) return null;
   if (typeof d.genes !== 'object' || d.genes === null) return null;
   const g = d.genes as Record<string, unknown>;
   if (!allFiniteNumbers(g, GENE_FIELDS)) return null;
@@ -47,7 +62,7 @@ export function parseSave(raw: string): SaveData | null {
 
   let needs: Needs = { ...FRESH_NEEDS };
   let pos: { x: number; y: number } | null = null;
-  if (d.v === 2) {
+  if (d.v !== 1) {
     if (typeof d.needs !== 'object' || d.needs === null) return null;
     const n = d.needs as Record<string, unknown>;
     if (!allFiniteNumbers(n, NEED_FIELDS)) return null;
@@ -61,11 +76,26 @@ export function parseSave(raw: string): SaveData | null {
     pos = { x: p.x as number, y: p.y as number };
   }
 
+  let disp: Dispositions = { ...FRESH_DISPOSITIONS };
+  let places: number[] = freshPlaces();
+  if (d.v === 3) {
+    if (typeof d.disp !== 'object' || d.disp === null) return null;
+    const dd = d.disp as Record<string, unknown>;
+    if (!allFiniteNumbers(dd, DISP_FIELDS)) return null;
+    const storedDisp = d.disp as unknown as Dispositions;
+    disp = { wariness: clamp01(storedDisp.wariness), attachment: clamp01(storedDisp.attachment) };
+    if (!Array.isArray(d.places) || d.places.length !== PLACE_CELLS) return null;
+    if (!d.places.every((cell) => typeof cell === 'number' && Number.isFinite(cell))) return null;
+    places = (d.places as number[]).map(clampPlace);
+  }
+
   return {
     genes: sanitizeGenes(d.genes as unknown as Genes),
     trust: clamp01(d.trust),
     needs,
     pos,
+    disp,
+    places,
   };
 }
 
@@ -78,14 +108,9 @@ export function loadSave(): SaveData | null {
   }
 }
 
-export function storeSave(
-  genes: Genes,
-  trust: number,
-  needs: Needs,
-  pos: { x: number; y: number },
-): void {
+export function storeSave(state: LiveState): void {
   try {
-    localStorage.setItem(KEY, serialize(genes, trust, needs, pos));
+    localStorage.setItem(KEY, serialize(state));
   } catch {
     // storage unavailable (private mode, quota) — the pip just lives for the session
   }
