@@ -14,12 +14,17 @@ body {
   cursor: crosshair;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   user-select: none;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #world {
   position: fixed;
   inset: 0;
   display: block;
+  touch-action: none;
 }
 
 #hud {

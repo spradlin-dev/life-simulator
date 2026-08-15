@@ -2,66 +2,40 @@ import './style.css';
 import {
   chooseState,
   clamp01,
+  knock,
   lerp,
   personalSpace,
-  startle,
   updateMoods,
   type CritterState,
   type Moods,
   type Senses,
 } from './brain.ts';
+import { createInput } from './input.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const hint = document.getElementById('hint') as HTMLDivElement;
 
+// logical viewport in CSS px; the canvas backing store is scaled to the device
+const view = { w: 0, h: 0 };
+
 function resize(): void {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  view.w = window.innerWidth;
+  view.h = window.innerHeight;
+  canvas.width = Math.round(view.w * dpr);
+  canvas.height = Math.round(view.h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resize);
 resize();
 
-// ------------------------------------------------------------------ senses
+const input = createInput();
+const pointer = input.state;
 
-const mouse = { x: -9999, y: -9999, present: false, speed: 0, stillFor: 999 };
-let prevMouse: { x: number; y: number } | null = null;
-
-window.addEventListener('mousemove', (e) => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
-  if (!mouse.present) prevMouse = null; // no phantom lunge when the cursor enters the window
-  mouse.present = true;
-});
-document.addEventListener('mouseleave', () => {
-  mouse.present = false;
-  prevMouse = null;
-});
-
-function senseMouse(dt: number): void {
-  if (!mouse.present) {
-    mouse.speed = 0;
-    mouse.stillFor += dt;
-    return;
-  }
-  if (prevMouse) {
-    const step = Math.hypot(mouse.x - prevMouse.x, mouse.y - prevMouse.y);
-    const instant = step / dt;
-    mouse.speed = lerp(mouse.speed, instant, Math.min(1, dt * 12));
-    if (instant > 60) mouse.stillFor = 0;
-    else mouse.stillFor += dt;
-  }
-  prevMouse = { x: mouse.x, y: mouse.y };
-}
-
-function currentSenses(): Senses {
-  return {
-    cursorPresent: mouse.present,
-    cursorDist: distToMouse(),
-    cursorSpeed: mouse.speed,
-    cursorStillFor: mouse.stillFor,
-  };
+if (matchMedia('(pointer: coarse)').matches) {
+  hint.textContent = 'touch gently — press and hold, and it may come see you.';
 }
 
 // ------------------------------------------------------------------ the critter
@@ -72,8 +46,8 @@ interface Vec {
 }
 
 const pip = {
-  x: canvas.width / 2,
-  y: canvas.height / 2,
+  x: view.w / 2,
+  y: view.h / 2,
   vx: 0,
   vy: 0,
   facing: 1,
@@ -85,11 +59,20 @@ const pip = {
   blinkIn: 2,
   emote: '',
   emoteFor: 0,
-  antenna: { x: canvas.width / 2, y: canvas.height / 2 - 42, vx: 0, vy: 0 },
+  antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
 };
 
-function distToMouse(): number {
-  return Math.hypot(mouse.x - pip.x, mouse.y - pip.y);
+function distToPointer(): number {
+  return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
+}
+
+function currentSenses(): Senses {
+  return {
+    presence: pointer.presence,
+    dist: distToPointer(),
+    speed: pointer.speed,
+    stillFor: pointer.stillFor,
+  };
 }
 
 function space(): number {
@@ -100,12 +83,6 @@ function showEmote(symbol: string): void {
   pip.emote = symbol;
   pip.emoteFor = 1.2;
 }
-
-window.addEventListener('mousedown', () => {
-  const before = pip.moods.fear;
-  pip.moods = startle(pip.moods, distToMouse(), 1.0);
-  if (pip.moods.fear > before) showEmote('!');
-});
 
 // ------------------------------------------------------------------ movement
 
@@ -131,7 +108,7 @@ function settle(dt: number, rate: number): void {
 }
 
 function act(dt: number, t: number): void {
-  const dist = distToMouse();
+  const dist = distToPointer();
 
   switch (pip.state) {
     case 'wander': {
@@ -143,8 +120,8 @@ function act(dt: number, t: number): void {
       let wt = pip.wanderTarget;
       if (!wt || Math.hypot(wt.x - pip.x, wt.y - pip.y) < 20) {
         wt = {
-          x: 60 + Math.random() * Math.max(0, canvas.width - 120),
-          y: 60 + Math.random() * Math.max(0, canvas.height - 120),
+          x: 60 + Math.random() * Math.max(0, view.w - 120),
+          y: 60 + Math.random() * Math.max(0, view.h - 120),
         };
         pip.wanderTarget = wt;
         if (Math.random() < 0.4) pip.pauseFor = 1 + Math.random() * 2.5;
@@ -155,18 +132,18 @@ function act(dt: number, t: number): void {
     case 'curious': {
       // creeps closer in fits and starts, stopping at a respectful distance
       const stepping = Math.sin(pip.stateTime * 2.4) > -0.2;
-      if (dist > space() && stepping) steerToward(mouse.x, mouse.y, 260, 75, dt);
+      if (dist > space() && stepping) steerToward(pointer.x, pointer.y, 260, 75, dt);
       else settle(dt, 5);
       if (pip.stateTime < 0.05) showEmote('?');
       break;
     }
     case 'follow': {
-      if (dist > space() + 26) steerToward(mouse.x, mouse.y, 500, 210, dt);
+      if (dist > space() + 26) steerToward(pointer.x, pointer.y, 500, 210, dt);
       else settle(dt, 4);
       break;
     }
     case 'flee': {
-      const away = Math.atan2(pip.y - mouse.y, pip.x - mouse.x);
+      const away = Math.atan2(pip.y - pointer.y, pip.x - pointer.x);
       const wobble = Math.sin(t * 9) * 0.5;
       steerToward(
         pip.x + Math.cos(away + wobble) * 100,
@@ -178,7 +155,7 @@ function act(dt: number, t: number): void {
       settle(dt, 10);
       break;
     case 'snuggle': {
-      if (dist > space() * 0.8) steerToward(mouse.x, mouse.y, 120, 40, dt);
+      if (dist > space() * 0.8) steerToward(pointer.x, pointer.y, 120, 40, dt);
       else settle(dt, 3);
       if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote('♥');
       break;
@@ -196,14 +173,14 @@ function act(dt: number, t: number): void {
   // soft spring away from the edges, hard clamp as a backstop
   const m = 50;
   if (pip.x < m) pip.vx += (m - pip.x) * 60 * dt;
-  if (pip.x > canvas.width - m) pip.vx -= (pip.x - (canvas.width - m)) * 60 * dt;
+  if (pip.x > view.w - m) pip.vx -= (pip.x - (view.w - m)) * 60 * dt;
   if (pip.y < m) pip.vy += (m - pip.y) * 60 * dt;
-  if (pip.y > canvas.height - m) pip.vy -= (pip.y - (canvas.height - m)) * 60 * dt;
+  if (pip.y > view.h - m) pip.vy -= (pip.y - (view.h - m)) * 60 * dt;
 
   pip.x += pip.vx * dt;
   pip.y += pip.vy * dt;
-  pip.x = Math.min(canvas.width - 26, Math.max(26, pip.x));
-  pip.y = Math.min(canvas.height - 26, Math.max(26, pip.y));
+  pip.x = Math.min(view.w - 26, Math.max(26, pip.x));
+  pip.y = Math.min(view.h - 26, Math.max(26, pip.y));
 
   if (Math.abs(pip.vx) > 5) pip.facing = Math.sign(pip.vx);
 }
@@ -242,7 +219,7 @@ function bodyColor(): string {
 }
 
 function draw(t: number): void {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, view.w, view.h);
 
   const speed = Math.hypot(pip.vx, pip.vy);
   const asleep = pip.state === 'sleep';
@@ -304,8 +281,8 @@ function draw(t: number): void {
   // eyes
   let lookX = 0;
   let lookY = 0;
-  if (mouse.present) {
-    const a = Math.atan2(mouse.y - y, mouse.x - x);
+  if (pointer.presence > 0) {
+    const a = Math.atan2(pointer.y - y, pointer.x - x);
     lookX = Math.cos(a) * 2.8;
     lookY = Math.sin(a) * 2.8;
   }
@@ -369,16 +346,22 @@ function updateHud(): void {
 }
 
 let last = performance.now();
-let presence = 0;
+let playedFor = 0;
 
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
   last = now;
   const t = now / 1000;
 
-  senseMouse(dt);
-  const senses = currentSenses();
+  input.update(dt);
 
+  for (const k of input.takeKnocks()) {
+    const before = pip.moods.fear;
+    pip.moods = knock(pip.moods, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
+    if (pip.moods.fear > before) showEmote('!');
+  }
+
+  const senses = currentSenses();
   const beforeFear = pip.moods.fear;
   pip.moods = updateMoods(pip.moods, senses, dt);
   if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote('!');
@@ -398,9 +381,9 @@ function frame(now: number): void {
   draw(t);
   updateHud();
 
-  if (mouse.present && presence < 9) {
-    presence += dt;
-    if (presence >= 9) hint.classList.add('hidden');
+  if (pointer.presence > 0.9 && playedFor < 9) {
+    playedFor += dt;
+    if (playedFor >= 9) hint.classList.add('hidden');
   }
   requestAnimationFrame(frame);
 }
