@@ -4,11 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pip — a little critter</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
 <canvas id="world"></canvas>
 <div id="hud"></div>
 <div id="hint">move your cursor gently — sudden moves scare it. hold still and it may come see you.</div>
+<div id="toast" hidden>
+  <span>a new version has hatched</span>
+  <button id="toast-reload">refresh</button>
+</div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

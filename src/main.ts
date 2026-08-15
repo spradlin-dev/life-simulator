@@ -1,4 +1,5 @@
 import './style.css';
+import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
 import { descend, FOUNDER, hueShift, type Genes } from './genes.ts';
 import {
@@ -37,6 +38,31 @@ const pointer = input.state;
 if (matchMedia('(pointer: coarse)').matches) {
   hint.textContent = 'touch gently — press and hold, and it may come see you.';
 }
+
+// update toast: taps on it are UI, not knocks on the glass
+const toast = document.getElementById('toast') as HTMLDivElement;
+const toastReload = document.getElementById('toast-reload') as HTMLButtonElement;
+// pointerup deliberately passes through: a canvas-started drag that ends on the
+// toast must still release touch contact (a toast-started tap can't knock anyway)
+for (const type of ['pointerdown', 'pointermove'] as const) {
+  toast.addEventListener(type, (e) => e.stopPropagation());
+}
+const updateSW = registerSW({
+  onNeedRefresh() {
+    toast.hidden = false;
+  },
+  onRegisteredSW(_url, registration) {
+    if (!registration) return;
+    const check = (): void => {
+      if (navigator.onLine) registration.update().catch(() => {});
+    };
+    setInterval(check, 15 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') check();
+    });
+  },
+});
+toastReload.addEventListener('click', () => void updateSW(true));
 
 // ------------------------------------------------------------------ the critter
 
