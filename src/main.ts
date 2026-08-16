@@ -37,6 +37,7 @@ interface Treat {
   x: number;
   y: number;
   age: number;
+  eater: Pip | null;
 }
 
 const treats: Treat[] = [];
@@ -113,6 +114,7 @@ function dropTreat(x: number, y: number): void {
     x: Math.min(view.w - 30, Math.max(30, x)),
     y: Math.min(view.h - 30, Math.max(30, y)),
     age: 0,
+    eater: null,
   });
   treatArmed = false;
   document.body.classList.remove('treat-armed');
@@ -126,9 +128,12 @@ function updateTreats(dt: number): void {
   treatButton.disabled = treats.length >= TREAT_CAP;
 }
 
-function nearestTreatTo(x: number, y: number): { treat: Treat; dist: number } | null {
+// a berry someone else is already eating is invisible to the search — crowding
+// one treat starved everyone (each shove reset the other's chewing progress)
+function nearestTreatTo(x: number, y: number, self: Pip | null = null): { treat: Treat; dist: number } | null {
   let best: { treat: Treat; dist: number } | null = null;
   for (const treat of treats) {
+    if (treat.eater !== null && treat.eater !== self) continue;
     const dist = Math.hypot(treat.x - x, treat.y - y);
     if (!best || dist < best.dist) best = { treat, dist };
   }
@@ -286,7 +291,7 @@ function alarmNear(self: Pip): number {
 }
 
 function sensesFor(pip: Pip): Senses {
-  const treat = nearestTreatTo(pip.x, pip.y);
+  const treat = nearestTreatTo(pip.x, pip.y, pip);
   return {
     presence: pointer.presence,
     dist: distToPointerOf(pip),
@@ -399,7 +404,7 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
       break;
     }
     case 'snack': {
-      const target = nearestTreatTo(pip.x, pip.y);
+      const target = nearestTreatTo(pip.x, pip.y, pip);
       if (!target) {
         pip.munchTarget = null;
         settle(pip, dt, 4);
@@ -410,9 +415,10 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
         pip.munchFor = 0;
       }
       if (target.dist > 18) {
-        pip.munchFor = 0;
+        // jostled out of range: chewing pauses but progress survives
         steerToward(pip, target.treat.x, target.treat.y, 320, 130, dt, sulkFactor);
       } else {
+        target.treat.eater = pip;
         settle(pip, dt, 8);
         pip.munchFor += dt;
         if (pip.munchFor >= 1.2) {
@@ -686,7 +692,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     lookY = Math.sin(a) * 2.8;
   }
   if (pip.state === 'snack') {
-    const target = nearestTreatTo(pip.x, pip.y);
+    const target = nearestTreatTo(pip.x, pip.y, pip);
     if (target) {
       const a = Math.atan2(target.treat.y - y, target.treat.x - x);
       lookX = Math.cos(a) * 2.8;
@@ -889,6 +895,9 @@ function frame(now: number): void {
       pip.stateTime = 0;
       pip.munchFor = 0;
       pip.munchTarget = null;
+      for (const treat of treats) {
+        if (treat.eater === pip) treat.eater = null;
+      }
     }
     pip.stateTime += dt;
 
