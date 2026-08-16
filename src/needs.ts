@@ -33,15 +33,17 @@ const FOOD_DRAIN_S = 480;
 // all rates are per second of sim time; a hidden tab pauses the loop, so a pip
 // is only ever hungry or tired because of time actually spent together.
 // tempo genes bend each drain — a 0.5 dial reproduces the original rates, so
-// no two pips need keep the same hours. famine is the ?famine dev knob: a
-// straight multiplier on belly drain, 1 in real play
+// no two pips need keep the same hours. hungerScale and tirednessScale are
+// the meadow dials (appetite, weariness): straight multipliers on the drains,
+// 1 on an ordinary day, and neither touches sleep's recovery
 export function tickNeeds(
   needs: Needs,
   state: CritterState,
   speed: number,
   dt: number,
   genes: Genes,
-  famine = 1,
+  hungerScale = 1,
+  tirednessScale = 1,
 ): Needs {
   const asleep = state === 'sleep';
   const engaged = ENGAGING[state];
@@ -55,9 +57,11 @@ export function tickNeeds(
   const verve = lerp(0.5, 1.5, needs.rest);
   const famished = lerp(1.75, 1, clamp01(needs.food / 0.35));
   return {
-    food: clamp01(needs.food - (dt / FOOD_DRAIN_S) * appetite * famine),
+    food: clamp01(needs.food - (dt / FOOD_DRAIN_S) * appetite * hungerScale),
     rest: clamp01(
-      asleep ? needs.rest + dt / 45 : needs.rest - (dt / 300) * (1 + speed / 300) * weariness * famished,
+      asleep
+        ? needs.rest + dt / 45
+        : needs.rest - (dt / 300) * (1 + speed / 300) * weariness * famished * tirednessScale,
     ),
     fun: clamp01(needs.fun + (engaged ? (dt / 25) * delight * verve : -(dt / 360) * boredom)),
   };

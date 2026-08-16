@@ -353,6 +353,21 @@ describe('copyStrand', () => {
     expect(out.length).toBe(STRAND_MAX);
   });
 
+  it('wildness zero stills the head: a perfect clone even from a warm swell', () => {
+    expect(copyStrand(FOUNDER_STRAND, [1], rolls({ 0: 0.99 }, 0.9), 0)).toBe(FOUNDER_STRAND);
+  });
+
+  it('the wildness dial scales the tremble: same seed, looser copy', () => {
+    const drifted = (wildness: number) => {
+      const out = copyStrand(FOUNDER_STRAND, [1], lcg(7), wildness);
+      const n = Math.min(out.length, FOUNDER_STRAND.length);
+      let diffs = Math.abs(out.length - FOUNDER_STRAND.length);
+      for (let i = 0; i < n; i++) if (out[i] !== FOUNDER_STRAND[i]) diffs++;
+      return diffs;
+    };
+    expect(drifted(2)).toBeGreaterThan(drifted(1));
+  });
+
   it('a skip at the thin floor is swallowed, never dropping below STRAND_MIN', () => {
     const thin = 'ACGT'.repeat(STRAND_MIN / 4);
     const trace = [...thin].map((_, i) => (i === 0 ? 1 : 0));

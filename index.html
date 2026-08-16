@@ -14,11 +14,29 @@
 <button id="treat-button" aria-label="drop a treat">●</button>
 <button id="feeder-lock" aria-label="keep the berries falling" hidden>🔓</button>
 <button id="census-button" aria-label="toggle the census">≡</button>
+<button id="dials-button" aria-label="toggle the dials">⚙</button>
+<div id="dials" hidden></div>
+<button id="mode-button" aria-label="switch between meadow and terrarium">⌂</button>
 <div id="roster"></div>
 <div id="census" hidden></div>
 <div id="toast" hidden>
   <span>a new version has hatched</span>
   <button id="toast-reload">refresh</button>
+</div>
+<!-- last in the body on purpose: the world picker must paint over every
+     panel, and nothing here sets a z-index -->
+<div id="title" hidden>
+  <div id="title-card">
+    <div id="title-name">pip</div>
+    <button class="mode-pick" id="pick-meadow">
+      <span class="mode-name">the meadow</span>
+      <span class="mode-desc">the real game: a little flock to care for. no levers, no do-overs — just you and them.</span>
+    </button>
+    <button class="mode-pick" id="pick-terrarium">
+      <span class="mode-name">the terrarium</span>
+      <span class="mode-desc">a separate sandbox world with every dial exposed. experiment freely — your meadow is never touched.</span>
+    </button>
+  </div>
 </div>
 <script type="module" src="/src/main.ts"></script>
 </body>

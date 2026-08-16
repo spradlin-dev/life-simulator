@@ -4,7 +4,7 @@ import type { Genes } from './genes.ts';
 import type { Needs } from './needs.ts';
 
 // how often a blissful pip divides: expected once per 10 minutes at happiness 1.
-// ?fecund=N multiplies this for mutation review on a live tab
+// The births dial multiplies this
 export const SPLIT_MAX_RATE = 1 / 600;
 // seconds to FULL readiness after a division; recovery is a smooth ramp, never a cliff
 export const SPLIT_COOLDOWN = 90;
@@ -13,9 +13,9 @@ export const SPLIT_COOLDOWN = 90;
 // happiness^4 makes it super-linear: misery never splits, bliss often does.
 // recovery since the last division scales the rate continuously — with no
 // eligibility moment to share, a flock can never phase-lock into waves
-export function splitChance(happiness: number, sinceSplit: number, dt: number, fecund = 1): number {
+export function splitChance(happiness: number, sinceSplit: number, dt: number, births = 1): number {
   const readiness = Math.min(1, Math.max(0, sinceSplit) / SPLIT_COOLDOWN) ** 2;
-  return Math.min(1, SPLIT_MAX_RATE * fecund * clamp01(happiness) ** 4 * readiness * dt);
+  return Math.min(1, SPLIT_MAX_RATE * births * clamp01(happiness) ** 4 * readiness * dt);
 }
 
 // what the split conserves; lifetime scars are deliberately absent — a
@@ -37,9 +37,10 @@ export function splitOutcome(
   core: Omit<PipCore, 'genes'>,
   comfort: readonly number[],
   rand: () => number = Math.random,
+  wildness = 1,
 ): [PipCore, PipCore] {
   const daughter = (): PipCore => {
-    const strand = copyStrand(core.strand, comfort, rand);
+    const strand = copyStrand(core.strand, comfort, rand, wildness);
     return {
       genes: decode(strand),
       strand,

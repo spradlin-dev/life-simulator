@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { MAX_SAVED_PIPS, parseSave, serialize, type LivePip } from './save.ts';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  clearSave,
+  loadSave,
+  MAX_SAVED_PIPS,
+  parseSave,
+  SAVE_KEYS,
+  serialize,
+  storeSave,
+  type LivePip,
+} from './save.ts';
 import { FOUNDER } from './genes.ts';
 import { DECODER_VERSION, FOUNDER_STRAND } from './dna.ts';
 import { FRESH_NEEDS } from './needs.ts';
@@ -55,6 +64,42 @@ describe('save round-trip', () => {
     });
     expect(parseSave(serialize([a, b], false))).toEqual({ pips: [a, b], lock: false });
     expect(parseSave(serialize([a], true))!.lock).toBe(true);
+  });
+});
+
+// the two-world firewall: the meadow and the terrarium each sleep in their
+// own slot, and neither can ever see or erase the other's
+describe('two worlds, two slots', () => {
+  const slots = new Map<string, string>();
+  const fakeStorage = {
+    getItem: (k: string) => slots.get(k) ?? null,
+    setItem: (k: string, v: string) => void slots.set(k, v),
+    removeItem: (k: string) => void slots.delete(k),
+  };
+
+  afterEach(() => {
+    slots.clear();
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it('a stored meadow is invisible to the terrarium, and vice versa', () => {
+    (globalThis as { localStorage?: unknown }).localStorage = fakeStorage;
+    storeSave([somePip()], true, SAVE_KEYS.meadow);
+    expect(loadSave(SAVE_KEYS.terrarium)).toBeNull();
+    const meadow = loadSave(SAVE_KEYS.meadow);
+    expect(meadow!.pips).toHaveLength(1);
+    expect(meadow!.lock).toBe(true);
+  });
+
+  it('clearing one world never touches the other', () => {
+    (globalThis as { localStorage?: unknown }).localStorage = fakeStorage;
+    storeSave([somePip()], false, SAVE_KEYS.meadow);
+    storeSave([somePip({ name: 'Labby' })], false, SAVE_KEYS.terrarium);
+    clearSave(SAVE_KEYS.terrarium);
+    expect(loadSave(SAVE_KEYS.terrarium)).toBeNull();
+    expect(loadSave(SAVE_KEYS.meadow)!.pips[0].name).toBe('Tester');
+    clearSave(SAVE_KEYS.meadow);
+    expect(loadSave(SAVE_KEYS.meadow)).toBeNull();
   });
 });
 

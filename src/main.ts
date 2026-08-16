@@ -27,8 +27,9 @@ import {
 } from './dispositions.ts';
 import { createInput } from './input.ts';
 import { makeName } from './names.ts';
-import { clearSave, loadSave, MAX_SAVED_PIPS, storeSave, type LivePip } from './save.ts';
+import { clearSave, loadSave, MAX_SAVED_PIPS, SAVE_KEYS, storeSave, type LivePip } from './save.ts';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN } from './mitosis.ts';
+import { DIAL_FIELDS, DIAL_SPECS, freshDials, loadDials, storeDials, type Dials } from './dials.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -392,10 +393,11 @@ function randomSpot(): Vec {
   };
 }
 
-// a pip several unseen generations from the founder: the strand drifts first
-// and the stats are read from it — the genome is the only heredity there is
+// a pip some unseen generations from the founder: the strand drifts first
+// and the stats are read from it — the genome is the only heredity there is.
+// The strangeness dial sets how far every arrival has traveled
 function wanderIn(x: number, y: number): Pip {
-  const strand = drift(FOUNDER_STRAND, 6);
+  const strand = drift(FOUNDER_STRAND, dials.strangeness);
   return makePip(decode(strand), strand, x, y);
 }
 
@@ -455,7 +457,7 @@ function clampToWorld(x: number, y: number, margin = 26): Vec {
 const pips: Pip[] = [];
 
 function saveWorld(): void {
-  storeSave(snapshotWorld(), feederLocked);
+  storeSave(snapshotWorld(), feederLocked, SAVE_KEY);
 }
 
 function snapshotWorld(): LivePip[] {
@@ -472,13 +474,27 @@ function snapshotWorld(): LivePip[] {
   }));
 }
 
-const params = new URLSearchParams(location.search);
-// dev knob: ?reset abandons the saved world (the installed app shares this
-// origin's storage, so a browser-tab reset wipes the PWA's world too)
-if (params.has('reset')) clearSave();
+// two worlds, one game: the MEADOW is the real one — a flock to care for,
+// with no levers at all — and the TERRARIUM is a separate sandbox where
+// every dial is exposed. Separate saves, and nothing transfers between them
+type Mode = 'meadow' | 'terrarium';
+const storedMode = (() => {
+  try {
+    return localStorage.getItem('pip-mode');
+  } catch {
+    return 'meadow';
+  }
+})();
+const mode: Mode = storedMode === 'terrarium' ? 'terrarium' : 'meadow';
+const SAVE_KEY = SAVE_KEYS[mode];
+
+// dials are terrarium physics: the meadow always runs the ordinary day and
+// never even reads the stored levers (loaded before the first wander-in so
+// a terrarium arrival honors the strangeness dial)
+const dials = mode === 'terrarium' ? loadDials() : freshDials();
 
 // the same pips, and how far you got with them, survive the refresh
-const saved = loadSave();
+const saved = loadSave(SAVE_KEY);
 if (saved) {
   feederLocked = saved.lock;
   for (const entry of saved.pips) {
@@ -495,14 +511,13 @@ if (saved) {
   saveWorld();
 }
 
-// dev knob: ?flock=N tops the roster up with fresh descendants
-const flockWanted = Number(params.get('flock'));
-if (Number.isFinite(flockWanted) && flockWanted >= 2) {
-  const cap = Math.min(100, Math.floor(flockWanted));
-  while (pips.length < cap) {
+// a knock on the meadow gate: wanderers walk in mid-day, not factory-new,
+// so even a fresh crowd is unsynchronized from its first minute
+function welcomeWanderers(count: number): void {
+  const before = pips.length;
+  for (let i = 0; i < count && pips.length < MAX_SAVED_PIPS; i++) {
     const spot = randomSpot();
     const pip = wanderIn(spot.x, spot.y);
-    // even minute one is unsynchronized: fresh flocks arrive mid-day, not factory-new
     pip.needs = {
       food: 0.82 + Math.random() * 0.18,
       rest: 0.82 + Math.random() * 0.18,
@@ -510,14 +525,11 @@ if (Number.isFinite(flockWanted) && flockWanted >= 2) {
     };
     pips.push(pip);
   }
+  if (pips.length === before) return; // a full meadow: nobody arrived, nothing changed
+  flockVersion++;
+  sinceSave = 0;
+  saveWorld();
 }
-
-// dev knob: ?fecund=N multiplies the split rate for mutation review
-const fecund = Math.min(1000, Math.max(1, Number(params.get('fecund')) || 1));
-
-// dev knob: ?famine=N empties bellies and runs the goodbye clock N times
-// faster, so a fade and poof can be watched without a real-time vigil
-const famine = Math.min(1000, Math.max(1, Number(params.get('famine')) || 1));
 
 let selectedPip: Pip = pips[0];
 // bumped on any population change; roster AND census rebuild against it
@@ -551,7 +563,7 @@ function divide(parent: Pip): Pip {
     strand: parent.strand,
     needs: parent.needs,
     generation: parent.generation,
-  }, parent.swellComfort);
+  }, parent.swellComfort, Math.random, dials.wildness);
   parent.swellComfort = [];
   const angle = Math.random() * Math.PI * 2;
   const at = clampToWorld(parent.x + Math.cos(angle) * 20, parent.y + Math.sin(angle) * 20);
@@ -1182,7 +1194,7 @@ const census = document.getElementById('census') as HTMLDivElement;
 const censusButton = document.getElementById('census-button') as HTMLButtonElement;
 shieldFromWorld(census);
 shieldFromWorld(censusButton);
-let censusOpen = params.has('census');
+let censusOpen = false;
 let censusBuiltVersion = -1;
 let censusRefreshedAt = -1;
 censusButton.addEventListener('click', () => {
@@ -1302,10 +1314,201 @@ function updateCensus(t: number): void {
   }
 }
 
+// ------------------------------------------------------------------ dials
+
+const dialsPanel = document.getElementById('dials') as HTMLDivElement;
+const dialsButton = document.getElementById('dials-button') as HTMLButtonElement;
+shieldFromWorld(dialsPanel);
+shieldFromWorld(dialsButton);
+
+// ratcheted alongside the specs: a new dial fails the build until it is named
+const DIAL_LABELS: Record<keyof Dials, string> = {
+  pace: 'pace',
+  births: 'births',
+  wildness: 'wildness',
+  appetite: 'appetite',
+  weariness: 'weariness',
+  feeder: 'feeder drip',
+  strangeness: 'strangeness',
+};
+
+const dialValue = (field: keyof Dials): string =>
+  DIAL_SPECS[field].whole
+    ? `${dials[field]} gen`
+    : `${dials[field].toFixed(2).replace(/\.?0+$/, '')}×`;
+
+const dialNote = document.createElement('div');
+dialNote.className = 'dial-note';
+dialNote.textContent = 'an ordinary day is 1× on every dial';
+dialsPanel.append(dialNote);
+
+const dialSliders = {} as Record<keyof Dials, HTMLInputElement>;
+const dialReadouts = {} as Record<keyof Dials, HTMLSpanElement>;
+for (const field of DIAL_FIELDS) {
+  const spec = DIAL_SPECS[field];
+  const row = document.createElement('label');
+  row.className = 'dial-row';
+  const name = document.createElement('span');
+  name.textContent = DIAL_LABELS[field];
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  // multiplier sliders glide in octaves, so ×0.5 and ×2 sit the same
+  // distance from the ordinary day
+  if (spec.log) {
+    slider.min = String(Math.log2(spec.min));
+    slider.max = String(Math.log2(spec.max));
+    slider.step = '0.01';
+  } else {
+    slider.min = String(spec.min);
+    slider.max = String(spec.max);
+    slider.step = '1';
+  }
+  slider.setAttribute('aria-label', `${DIAL_LABELS[field]} dial`);
+  const readout = document.createElement('span');
+  readout.className = 'dial-value';
+  slider.addEventListener('input', () => {
+    let at = Number(slider.value);
+    // a log slider snaps to the ordinary day when it brushes it — thumb too,
+    // so the control never looks off-center while reading 1×
+    if (spec.log && Math.abs(at) < 0.05) {
+      at = 0;
+      slider.value = '0';
+    }
+    dials[field] = spec.log ? 2 ** at : Math.round(at);
+    readout.textContent = dialValue(field);
+    storeDials(dials);
+  });
+  row.append(name, slider, readout);
+  dialsPanel.append(row);
+  dialSliders[field] = slider;
+  dialReadouts[field] = readout;
+}
+
+function showDialPositions(): void {
+  for (const field of DIAL_FIELDS) {
+    const spec = DIAL_SPECS[field];
+    dialSliders[field].value = String(spec.log ? Math.log2(dials[field]) : dials[field]);
+    dialReadouts[field].textContent = dialValue(field);
+  }
+}
+showDialPositions();
+
+const dialActions = document.createElement('div');
+dialActions.className = 'dial-actions';
+function dialAction(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.className = 'dial-act';
+  button.textContent = label;
+  button.addEventListener('click', onClick);
+  dialActions.append(button);
+  return button;
+}
+dialAction('back to ordinary', () => {
+  Object.assign(dials, freshDials());
+  storeDials(dials);
+  showDialPositions();
+});
+dialAction('welcome a wanderer', () => welcomeWanderers(1));
+dialAction('welcome ten', () => welcomeWanderers(10));
+dialsPanel.append(dialActions);
+
+// beginning again erases every pip, so it asks twice — and the moment passes
+const resetButton = document.createElement('button');
+resetButton.className = 'dial-act begin-anew';
+resetButton.textContent = 'begin a new terrarium…';
+let resetArmedUntil = 0;
+function disarmReset(): void {
+  resetArmedUntil = 0;
+  resetButton.textContent = 'begin a new terrarium…';
+  resetButton.classList.remove('armed');
+}
+resetButton.addEventListener('click', () => {
+  if (performance.now() < resetArmedUntil) {
+    disarmReset();
+    beginAnew();
+    return;
+  }
+  resetArmedUntil = performance.now() + 3500;
+  resetButton.textContent = 'really begin again?';
+  resetButton.classList.add('armed');
+  setTimeout(() => {
+    if (resetArmedUntil > 0 && performance.now() >= resetArmedUntil) disarmReset();
+  }, 3600);
+});
+dialsPanel.append(resetButton);
+
+function beginAnew(): void {
+  clearSave(SAVE_KEY);
+  treats.length = 0;
+  feederLocked = false;
+  pips.length = 0;
+  const first = wanderIn(world.w / 2, world.h / 2);
+  showEmote(first, '✧');
+  pips.push(first);
+  selectedPip = first;
+  flockVersion++;
+  sinceSave = 0;
+  saveWorld();
+}
+
+let dialsOpen = false;
+function setDialsOpen(open: boolean): void {
+  dialsOpen = open;
+  dialsPanel.hidden = !open;
+  dialsButton.classList.toggle('active', open);
+}
+dialsButton.addEventListener('click', () => setDialsOpen(!dialsOpen));
+// the meadow builds the same panel but never shows it: one code path, and
+// not a single lever reachable in the real game
+if (mode === 'meadow') dialsButton.hidden = true;
+
+// ------------------------------------------------------------------ worlds
+
+const title = document.getElementById('title') as HTMLDivElement;
+const modeButton = document.getElementById('mode-button') as HTMLButtonElement;
+const pickMeadow = document.getElementById('pick-meadow') as HTMLButtonElement;
+const pickTerrarium = document.getElementById('pick-terrarium') as HTMLButtonElement;
+shieldFromWorld(title);
+shieldFromWorld(modeButton);
+
+// choosing the world you are already in just closes the menu; choosing the
+// other one reboots into it — the pagehide save has already tucked this
+// world in, and each world wakes from its own slot
+function pickMode(next: Mode): void {
+  let stored = false;
+  try {
+    localStorage.setItem('pip-mode', next);
+    stored = true;
+  } catch {
+    // storage unavailable — no world can be switched without it, and a
+    // blind reload would just strand the player in a loop
+  }
+  if (next === mode || !stored) {
+    title.hidden = true;
+    return;
+  }
+  location.reload();
+}
+pickMeadow.addEventListener('click', () => pickMode('meadow'));
+pickTerrarium.addEventListener('click', () => pickMode('terrarium'));
+(mode === 'meadow' ? pickMeadow : pickTerrarium).classList.add('current');
+modeButton.addEventListener('click', () => {
+  title.hidden = false;
+});
+// the very first visit asks which world to enter; every later boot goes
+// straight into the one you last played
+if (storedMode === null) title.hidden = false;
+
 window.addEventListener('keydown', (e) => {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  // a focused slider owns the keyboard — its arrows must not also cycle pips
+  if (e.target instanceof HTMLInputElement) return;
   if (e.key === 'c' || e.key === 'C') {
     censusOpen = !censusOpen;
+    return;
+  }
+  if ((e.key === 'd' || e.key === 'D') && mode === 'terrarium') {
+    setDialsOpen(!dialsOpen);
     return;
   }
   if ((e.key === 'f' || e.key === 'F') && pointer.presence > 0) {
@@ -1316,6 +1519,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key !== 'Tab' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   // Tab keeps its focus-traversal job while the toast is up or there is no flock
   if (e.key === 'Tab' && (!toast.hidden || pips.length < 2)) return;
+  // ...and whenever any real control holds focus — a keyboard user must be
+  // able to walk a panel's buttons without cycling pips instead
+  if (e.key === 'Tab' && e.target instanceof HTMLElement && e.target !== document.body) return;
   e.preventDefault();
   const step = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
   const idx = Math.max(0, pips.indexOf(selectedPip));
@@ -1367,22 +1573,15 @@ function meter(v: number): string {
 let last = performance.now();
 let playedFor = 0;
 let sinceSave = 0;
+// births and goodbyes ask for a save; it flushes once per frame, so a fast
+// day never stacks synchronous writes inside one paint
+let saveQueued = false;
+// the world's own clock, advanced by sim steps: motion phases (a flee's
+// evasion wobble) must move with meadow time, not the wall clock
+let worldT = 0;
 
-function frame(now: number): void {
-  const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
-  last = now;
-  if (paused) {
-    requestAnimationFrame(frame);
-    return;
-  }
-  const t = now / 1000;
-
-  input.update(dt);
-  {
-    const w = toWorld(pointer.x, pointer.y);
-    wp.x = w.x;
-    wp.y = w.y;
-  }
+// one step of meadow time: everything that happens in the world, no drawing
+function simulate(dt: number, t: number): void {
   updateTreats(dt);
 
   if (fRainHeld || buttonRainHeld) {
@@ -1399,7 +1598,9 @@ function frame(now: number): void {
   if (feederLocked) {
     feedTimer -= dt;
     while (feedTimer <= 0) {
-      feedTimer += FEED_EVERY;
+      // the feeder dial retunes the drip, and with it the size the locked
+      // colony settles at (about 3.3 pips per berry-per-minute)
+      feedTimer += FEED_EVERY / dials.feeder;
       dropTreatInView();
     }
   } else {
@@ -1458,7 +1659,7 @@ function frame(now: number): void {
     }
     pip.stateTime += dt;
 
-    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed, famine);
+    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed, dials.appetite, dials.weariness);
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     const sulkFactor = sulkOf(happiness);
 
@@ -1477,8 +1678,9 @@ function frame(now: number): void {
     updateTimers(pip, dt, sulkFactor);
 
     // the gentle goodbye: a long-empty belly fades a pip, and if nobody ever
-    // feeds it, it shrinks and poofs into sparkles. any bite cancels everything
-    if (pip.needs.food <= 0) pip.starvingFor += dt * famine;
+    // feeds it, it shrinks and poofs into sparkles. any bite cancels
+    // everything, and the grace window is pure meadow time — no dial cuts it
+    if (pip.needs.food <= 0) pip.starvingFor += dt;
     else pip.starvingFor = 0;
     if (pip.poofFor > 0 && pip.needs.food > 0) {
       pip.poofFor = 0;
@@ -1514,7 +1716,7 @@ function frame(now: number): void {
       settled &&
       pip.poofFor <= 0 &&
       pips.length + born.length + reserved < MAX_SAVED_PIPS &&
-      Math.random() < splitChance(happiness, pip.sinceSplit, dt, fecund)
+      Math.random() < splitChance(happiness, pip.sinceSplit, dt, dials.births)
     ) {
       pip.splitFor = SPLIT_SWELL_S;
       pip.swellComfort = [];
@@ -1536,13 +1738,46 @@ function frame(now: number): void {
     }
     if (!pips.includes(selectedPip)) selectedPip = pips[0];
     flockVersion++;
-    sinceSave = 0;
-    saveWorld();
+    saveQueued = true;
   }
 
   if (born.length) {
     pips.push(...born);
     flockVersion++;
+    saveQueued = true;
+  }
+}
+
+function frame(now: number): void {
+  const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
+  last = now;
+  if (paused) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  const t = now / 1000;
+
+  // hand senses stay real-time: how gently the watcher moves must read the
+  // same at every pace, so pointer speed is real pixels per real second
+  input.update(dt);
+  {
+    const w = toWorld(pointer.x, pointer.y);
+    wp.x = w.x;
+    wp.y = w.y;
+  }
+
+  // the pace dial stretches how much meadow time each real second carries;
+  // substeps keep every step inside the physics clamp, so a fast day runs
+  // more steps, never bigger ones
+  let simLeft = dt * dials.pace;
+  while (simLeft > 1e-9) {
+    const step = Math.min(0.05, simLeft);
+    simLeft -= step;
+    worldT += step;
+    simulate(step, worldT);
+  }
+  if (saveQueued) {
+    saveQueued = false;
     sinceSave = 0;
     saveWorld();
   }

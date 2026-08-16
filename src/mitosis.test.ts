@@ -34,12 +34,12 @@ describe('splitChance', () => {
     expect(splitChance(0.5, SPLIT_COOLDOWN, 1)).toBeLessThan(splitChance(1, SPLIT_COOLDOWN, 1) / 4);
   });
 
-  it('scales with the tick and with fecundity', () => {
+  it('scales with the tick and with the births dial', () => {
     expect(splitChance(1, SPLIT_COOLDOWN, 2)).toBeCloseTo(splitChance(1, SPLIT_COOLDOWN, 1) * 2);
     expect(splitChance(1, SPLIT_COOLDOWN, 1, 10)).toBeCloseTo(splitChance(1, SPLIT_COOLDOWN, 1) * 10);
   });
 
-  it('is a probability even at absurd fecundity', () => {
+  it('is a probability even with the births dial cranked absurdly', () => {
     expect(splitChance(1, SPLIT_COOLDOWN, 1, 1e9)).toBe(1);
   });
 
@@ -109,6 +109,12 @@ describe('splitOutcome', () => {
     expect(rigidB.strand).toBe(core.strand);
     const [warm] = splitOutcome(core, [1], lcg(9));
     expect(warm.strand).not.toBe(core.strand);
+  });
+
+  it('wildness zero stills the copyist: perfect clones from any swell', () => {
+    const [a, b] = splitOutcome(core, [1], lcg(9), 0);
+    expect(a.strand).toBe(core.strand);
+    expect(b.strand).toBe(core.strand);
   });
 
   it('keeps every gene inside its legal range', () => {

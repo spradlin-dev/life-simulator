@@ -133,6 +133,171 @@ body {
   box-shadow: 0 0 10px rgba(143, 163, 184, 0.4);
 }
 
+#mode-button {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid #3a5c50;
+  background: #16222e;
+  color: #8fa3b8;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+#title {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 16, 22, 0.82);
+}
+
+#title[hidden] {
+  display: none;
+}
+
+#title-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(88vw, 380px);
+  padding: 22px;
+  background: #101821;
+  border: 1px solid #2a3947;
+  border-radius: 14px;
+}
+
+#title-name {
+  color: #6fd3b0;
+  font-size: 26px;
+  letter-spacing: 3px;
+  text-align: center;
+}
+
+.mode-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 12px 14px;
+  background: #16222e;
+  border: 1px solid #3a5c50;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.mode-pick.current {
+  border-color: #6fd3b0;
+  box-shadow: 0 0 10px rgba(111, 211, 176, 0.35);
+}
+
+.mode-pick .mode-name {
+  color: #dfe8f0;
+  font: 14px ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.mode-pick .mode-desc {
+  color: #8fa3b8;
+  font: 11px/1.5 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  white-space: normal;
+}
+
+#dials-button {
+  position: fixed;
+  bottom: 74px;
+  left: 18px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid #3a5c50;
+  background: #16222e;
+  color: #8fa3b8;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+#dials-button.active {
+  border-color: #8fa3b8;
+  box-shadow: 0 0 10px rgba(143, 163, 184, 0.4);
+}
+
+#dials {
+  position: fixed;
+  bottom: 132px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: min(86vw, 270px);
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 12px;
+  background: rgba(16, 24, 33, 0.88);
+  border: 1px solid #2a3947;
+  border-radius: 10px;
+}
+
+#dials[hidden] {
+  display: none;
+}
+
+.dial-note {
+  color: #5d7186;
+  font-size: 10px;
+}
+
+.dial-row {
+  display: grid;
+  grid-template-columns: 82px 1fr 52px;
+  align-items: center;
+  gap: 8px;
+  color: #8fa3b8;
+  font-size: 11px;
+}
+
+.dial-row input[type='range'] {
+  width: 100%;
+  accent-color: #6fd3b0;
+  cursor: pointer;
+}
+
+.dial-value {
+  text-align: right;
+  color: #b8cfc6;
+}
+
+.dial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.dial-act {
+  font: 11px ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: #b8cfc6;
+  background: none;
+  border: 1px solid #3a5c50;
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.dial-act.begin-anew {
+  align-self: flex-start;
+  color: #8fa3b8;
+}
+
+.dial-act.armed {
+  border-color: #e05c6e;
+  color: #e05c6e;
+  box-shadow: 0 0 8px rgba(224, 92, 110, 0.4);
+}
+
 #census {
   position: fixed;
   top: 14px;

@@ -378,6 +378,7 @@ export function copyStrand(
   strand: string,
   comfort: readonly number[],
   rand: () => number = Math.random,
+  wildness = 1,
 ): string {
   let out = '';
   // the head starts with a random partial charge, so the first slip is as
@@ -388,7 +389,9 @@ export function copyStrand(
     const felt = comfort.length
       ? clamp01(comfort[Math.min(comfort.length - 1, Math.floor((pos / strand.length) * comfort.length))])
       : 0.5;
-    wobble += (COPY_BASE + felt * COPY_WARMTH) * (0.5 + rand());
+    // the wildness dial scales the tremble uniformly: comfort still decides
+    // WHERE the head slips, the dial only how often
+    wobble += (COPY_BASE + felt * COPY_WARMTH) * wildness * (0.5 + rand());
     const letter = strand[pos];
     if (wobble < 1) {
       out += letter;

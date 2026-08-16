@@ -77,12 +77,26 @@ describe('tickNeeds', () => {
     expect(drained(0)).toBeCloseTo(1.75 / 300, 10);
   });
 
-  it('famine multiplies belly drain exactly and touches nothing else', () => {
+  it('the appetite dial multiplies belly drain exactly and touches nothing else', () => {
     const lean = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 10);
     expect(lean.food).toBeCloseTo(1 - 10 / 480, 10);
     expect(lean.rest).toBeCloseTo(1 - 1 / 300, 10);
     expect(lean.fun).toBeCloseTo(0.7 - 1 / 360, 10);
     expect(tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1)).toEqual(
+      tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER),
+    );
+  });
+
+  it('the weariness dial multiplies tiring exactly, and never sleep recovery', () => {
+    const worn = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1, 10);
+    expect(worn.rest).toBeCloseTo(1 - 10 / 300, 10);
+    expect(worn.food).toBeCloseTo(1 - 1 / 480, 10);
+    expect(worn.fun).toBeCloseTo(0.7 - 1 / 360, 10);
+    const asleep = { food: 1, rest: 0.5, fun: 0.7 };
+    expect(tickNeeds(asleep, 'sleep', 0, 1, FOUNDER, 1, 10).rest).toEqual(
+      tickNeeds(asleep, 'sleep', 0, 1, FOUNDER).rest,
+    );
+    expect(tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1, 1)).toEqual(
       tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER),
     );
   });

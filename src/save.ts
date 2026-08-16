@@ -42,7 +42,11 @@ export interface WorldSave {
   lock: boolean;
 }
 
-const KEY = 'pip-save';
+// one storage slot per world: the meadow is the real game, the terrarium is
+// the sandbox. The keys live here so no other module can invent a third
+// world or point one world's writer at the other's slot
+export const SAVE_KEYS = { meadow: 'pip-save', terrarium: 'pip-terrarium' } as const;
+export type SaveKey = (typeof SAVE_KEYS)[keyof typeof SAVE_KEYS];
 // one ceiling for both the save file and the live population (main.ts gates
 // births on it): sharing the constant means the writer can never outgrow the
 // reader, and a tampered file can't resurrect a million pips. Since the food
@@ -201,26 +205,26 @@ export function parseSave(raw: string): WorldSave | null {
   };
 }
 
-export function loadSave(): WorldSave | null {
+export function loadSave(key: SaveKey): WorldSave | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(key);
     return raw === null ? null : parseSave(raw);
   } catch {
     return null;
   }
 }
 
-export function clearSave(): void {
+export function clearSave(key: SaveKey): void {
   try {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem(key);
   } catch {
     // storage unavailable — nothing to clear
   }
 }
 
-export function storeSave(pips: readonly LivePip[], lock: boolean): void {
+export function storeSave(pips: readonly LivePip[], lock: boolean, key: SaveKey): void {
   try {
-    localStorage.setItem(KEY, serialize(pips, lock));
+    localStorage.setItem(key, serialize(pips, lock));
   } catch {
     // storage unavailable (private mode, quota) — the pips just live for the session
   }
