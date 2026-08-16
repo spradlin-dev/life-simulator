@@ -111,12 +111,23 @@ describe('migrations keep the pip', () => {
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
   });
 
-  it('v6 keeps names, salvages mangled ones, and demands complete genomes', () => {
-    const kept = parseSave(JSON.stringify({ v: 6, pips: [somePip()] }));
+  it('v7 keeps names, salvages mangled ones, and demands complete genomes', () => {
+    const kept = parseSave(JSON.stringify({ v: 7, pips: [somePip()] }));
     expect(kept!.pips[0].name).toBe('Tester');
-    const mangled = parseSave(JSON.stringify({ v: 6, pips: [{ ...somePip(), name: 1234 }] }));
+    const mangled = parseSave(JSON.stringify({ v: 7, pips: [{ ...somePip(), name: 1234 }] }));
     expect(mangled!.pips[0].name).toMatch(NAME_SHAPE);
-    expect(parseSave(JSON.stringify({ v: 6, pips: [{ ...somePip(), genes: OLD_GENES }] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 7, pips: [{ ...somePip(), genes: OLD_GENES }] }))).toBeNull();
+  });
+
+  it('v6 genomes gain the tempo genes at their midpoints, names intact', () => {
+    const preTempo = { ...FOUNDER } as Record<string, number>;
+    delete preTempo.metabolism;
+    delete preTempo.stamina;
+    delete preTempo.playfulness;
+    const parsed = parseSave(JSON.stringify({ v: 6, pips: [{ ...somePip(), genes: preTempo }] }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+    expect(parsed!.pips[0].name).toBe('Tester');
   });
 });
 
@@ -125,7 +136,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 7, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 8, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();

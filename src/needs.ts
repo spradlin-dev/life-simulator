@@ -1,5 +1,6 @@
 import { clamp01, lerp } from './math.ts';
 import type { CritterState } from './brain.ts';
+import type { Genes } from './genes.ts';
 
 export interface Needs {
   food: number;
@@ -27,14 +28,20 @@ const ENGAGING: Record<CritterState, boolean> = {
 };
 
 // all rates are per second of sim time; a hidden tab pauses the loop, so a pip
-// is only ever hungry or tired because of time actually spent together
-export function tickNeeds(needs: Needs, state: CritterState, speed: number, dt: number): Needs {
+// is only ever hungry or tired because of time actually spent together.
+// tempo genes bend each drain — a 0.5 dial reproduces the original rates, so
+// no two pips need keep the same hours
+export function tickNeeds(needs: Needs, state: CritterState, speed: number, dt: number, genes: Genes): Needs {
   const asleep = state === 'sleep';
   const engaged = ENGAGING[state];
+  const appetite = lerp(0.6, 1.4, genes.metabolism);
+  const weariness = lerp(1.4, 0.6, genes.stamina);
+  const boredom = lerp(0.6, 1.4, genes.playfulness);
+  const delight = lerp(0.75, 1.25, genes.playfulness);
   return {
-    food: clamp01(needs.food - dt / 480),
-    rest: clamp01(asleep ? needs.rest + dt / 45 : needs.rest - (dt / 300) * (1 + speed / 300)),
-    fun: clamp01(needs.fun + (engaged ? dt / 25 : -dt / 360)),
+    food: clamp01(needs.food - (dt / 480) * appetite),
+    rest: clamp01(asleep ? needs.rest + dt / 45 : needs.rest - (dt / 300) * (1 + speed / 300) * weariness),
+    fun: clamp01(needs.fun + (engaged ? (dt / 25) * delight : -(dt / 360) * boredom)),
   };
 }
 

@@ -142,7 +142,10 @@ export function chooseState(
   if (needs.rest < 0.15) return decide('sleep');
   if (stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
 
-  if (treatDist < 480 && needs.food < 0.85) return decide('snack');
+  // hunger sharpens the nose: the notice range starts at today's 480 and
+  // stretches as the belly empties
+  const noticeRange = lerp(480, 700, clamp01((0.85 - needs.food) / 0.85));
+  if (treatDist < noticeRange && needs.food < 0.85) return decide('snack');
 
   if (presence <= 0) return decide('wander');
   if (dist < personalSpace(moods.trust, genes) + 30 && moods.trust > snugglesAt && speed < 70 && presence > 0.5) {

@@ -31,6 +31,9 @@ const plain: Genes = {
   eyeSize: 0.5,
   eyeGap: 0.5,
   freckles: 0.5,
+  metabolism: 0.5,
+  stamina: 0.5,
+  playfulness: 0.5,
 };
 
 function senses(overrides: Partial<Senses> = {}): Senses {
@@ -254,8 +257,14 @@ describe('chooseState', () => {
   });
 
   it('a hungry pip with no treat in range does not snack', () => {
-    expect(chooseState('wander', calm, { ...fed, food: 0.3 }, plain, senses({ treatDist: 600 })).state).not.toBe('snack');
+    expect(chooseState('wander', calm, { ...fed, food: 0.3 }, plain, senses({ treatDist: 800 })).state).not.toBe('snack');
     expect(chooseState('wander', calm, { ...fed, food: 0.3 }, plain, senses()).state).toBe('wander');
+  });
+
+  it('hunger sharpens the nose: a starving pip notices what a peckish one misses', () => {
+    const distant = senses({ treatDist: 600 });
+    expect(chooseState('wander', calm, { ...fed, food: 0.8 }, plain, distant).state).not.toBe('snack');
+    expect(chooseState('wander', calm, { ...fed, food: 0.05 }, plain, distant).state).toBe('snack');
   });
 
   it('hunger makes it braver', () => {

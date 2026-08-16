@@ -15,6 +15,9 @@ export interface Genes {
   eyeSize: number;
   eyeGap: number;
   freckles: number; // density; below the midpoint band, none at all
+  metabolism: number; // how fast the belly empties
+  stamina: number; // how long it lasts before needing sleep
+  playfulness: number; // how fast boredom sets in, how richly play refills
 }
 
 // every gene, checked complete at compile time: adding a field to Genes without
@@ -34,6 +37,9 @@ const GENE_FIELD_SET: Record<keyof Genes, true> = {
   eyeSize: true,
   eyeGap: true,
   freckles: true,
+  metabolism: true,
+  stamina: true,
+  playfulness: true,
 };
 export const GENE_FIELDS = Object.keys(GENE_FIELD_SET) as readonly (keyof Genes)[];
 
@@ -54,6 +60,9 @@ const DIAL_FIELD_SET: Record<DialField, true> = {
   eyeSize: true,
   eyeGap: true,
   freckles: true,
+  metabolism: true,
+  stamina: true,
+  playfulness: true,
 };
 export const DIAL_FIELDS = Object.keys(DIAL_FIELD_SET) as readonly DialField[];
 
@@ -73,6 +82,9 @@ export const FOUNDER: Genes = {
   eyeSize: 0.5,
   eyeGap: 0.5,
   freckles: 0.5,
+  metabolism: 0.5,
+  stamina: 0.5,
+  playfulness: 0.5,
 };
 
 const TRAIT_SIGMA = 0.06;
@@ -100,6 +112,9 @@ export function sanitizeGenes(g: Genes): Genes {
     eyeSize: clamp01(g.eyeSize),
     eyeGap: clamp01(g.eyeGap),
     freckles: clamp01(g.freckles),
+    metabolism: clamp01(g.metabolism),
+    stamina: clamp01(g.stamina),
+    playfulness: clamp01(g.playfulness),
   };
   return clean;
 }

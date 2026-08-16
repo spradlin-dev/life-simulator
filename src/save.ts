@@ -46,7 +46,7 @@ export const MAX_SAVED_PIPS = 300;
 
 export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 6, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 7, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -138,13 +138,13 @@ export function parseSave(raw: string): WorldSave | null {
   if (typeof data !== 'object' || data === null) return null;
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
-  // roster, v4 the lineage, v5 names and looks); future versions must keep
-  // MIGRATING — a pip must never be lost
-  if (d.v === 6 || d.v === 5 || d.v === 4) {
+  // roster, v4 the lineage, v5 names and looks, v6 the tempo genes); future
+  // versions must keep MIGRATING — a pip must never be lost
+  if (d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
-      const pip = parseFullPip(entry, d.v !== 6);
+      const pip = parseFullPip(entry, d.v !== 7);
       if (!pip) return null;
       let generation = 0;
       if (d.v !== 4) {
@@ -153,7 +153,7 @@ export function parseSave(raw: string): WorldSave | null {
         generation = Math.min(9999, Math.max(0, Math.floor(g)));
       }
       // names are cosmetic: older saves and mangled entries get a fresh one
-      const name = d.v === 6 ? sanitizeName((entry as Record<string, unknown>).name) : makeName();
+      const name = d.v >= 6 ? sanitizeName((entry as Record<string, unknown>).name) : makeName();
       pips.push({ ...pip, generation, name });
     }
     return { pips };

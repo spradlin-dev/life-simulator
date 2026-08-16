@@ -449,7 +449,14 @@ if (Number.isFinite(flockWanted) && flockWanted >= 2) {
   const cap = Math.min(100, Math.floor(flockWanted));
   while (pips.length < cap) {
     const spot = randomSpot();
-    pips.push(makePip(descend(FOUNDER, 6), spot.x, spot.y));
+    const pip = makePip(descend(FOUNDER, 6), spot.x, spot.y);
+    // even minute one is unsynchronized: fresh flocks arrive mid-day, not factory-new
+    pip.needs = {
+      food: 0.82 + Math.random() * 0.18,
+      rest: 0.82 + Math.random() * 0.18,
+      fun: 0.55 + Math.random() * 0.3,
+    };
+    pips.push(pip);
   }
 }
 
@@ -552,7 +559,9 @@ function showEmote(pip: Pip, symbol: string): void {
 // ------------------------------------------------------------------ movement
 
 function steerToward(pip: Pip, tx: number, ty: number, accel: number, maxSpeed: number, dt: number, sulkFactor: number): void {
-  const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulkFactor);
+  // a tired pip shuffles: pace fades once rest drops below half
+  const shuffle = 0.75 + 0.25 * Math.min(1, pip.needs.rest * 2);
+  const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulkFactor) * shuffle;
   const a = accel * zip;
   const cap = maxSpeed * zip;
   const dx = tx - pip.x;
@@ -1309,7 +1318,7 @@ function frame(now: number): void {
     }
     pip.stateTime += dt;
 
-    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt);
+    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed);
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     const sulkFactor = sulkOf(happiness);
 
