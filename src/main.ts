@@ -782,9 +782,11 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   }
   // a poofing pip shrinks away; a long-starving one grows translucent first
   const poofScale = pip.poofFor > 0 ? pip.poofFor / POOF_S : 1;
+  let bodyAlpha = 1;
   if (pip.starvingFor > STARVE_FADE_AT) {
     const gone = Math.min(1, (pip.starvingFor - STARVE_FADE_AT) / (STARVE_POOF_AT - STARVE_FADE_AT));
-    ctx.globalAlpha = 1 - 0.45 * gone;
+    bodyAlpha = 1 - 0.45 * gone;
+    ctx.globalAlpha = bodyAlpha;
   }
   const g = pip.genes;
   const R = 24 * lerp(0.85, 1.15, g.size) * pip.grown * swell * poofScale;
@@ -937,6 +939,14 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     ctx.fillStyle = EMOTE_COLORS[pip.emote] ?? '#dfe8f0';
     ctx.fillText(pip.emote, x + 16, y - R - 14 - rise);
   }
+
+  // the name floats above everything the pip is — recognition at a glance,
+  // soft enough not to shout over a crowd
+  ctx.globalAlpha = bodyAlpha;
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = isSelected ? 'rgba(223, 232, 240, 0.95)' : 'rgba(143, 163, 184, 0.6)';
+  ctx.fillText(pip.name, x, y - lerp(30, 54, g.antLength) * pip.grown - 10);
   ctx.globalAlpha = 1;
 }
 
