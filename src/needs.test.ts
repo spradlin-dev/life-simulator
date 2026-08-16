@@ -59,6 +59,16 @@ describe('tickNeeds', () => {
     expect(engaged.fun).toBeCloseTo(0.5 + 1 / 25, 10);
   });
 
+  it('famine multiplies belly drain exactly and touches nothing else', () => {
+    const lean = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 10);
+    expect(lean.food).toBeCloseTo(1 - 10 / 480, 10);
+    expect(lean.rest).toBeCloseTo(1 - 1 / 300, 10);
+    expect(lean.fun).toBeCloseTo(0.7 - 1 / 360, 10);
+    expect(tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1)).toEqual(
+      tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER),
+    );
+  });
+
   it('metabolism sets the table: high burns food faster than low', () => {
     const glutton = run(FRESH_NEEDS, 'wander', 0, 120, { ...FOUNDER, metabolism: 1 });
     const grazer = run(FRESH_NEEDS, 'wander', 0, 120, { ...FOUNDER, metabolism: 0 });

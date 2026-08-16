@@ -463,6 +463,10 @@ if (Number.isFinite(flockWanted) && flockWanted >= 2) {
 // dev knob: ?fecund=N multiplies the split rate for mutation review
 const fecund = Math.min(1000, Math.max(1, Number(params.get('fecund')) || 1));
 
+// dev knob: ?famine=N empties bellies and runs the goodbye clock N times
+// faster, so a fade and poof can be watched without a real-time vigil
+const famine = Math.min(1000, Math.max(1, Number(params.get('famine')) || 1));
+
 let selectedPip: Pip = pips[0];
 // bumped on any population change; roster AND census rebuild against it
 let flockVersion = 0;
@@ -1318,7 +1322,7 @@ function frame(now: number): void {
     }
     pip.stateTime += dt;
 
-    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed);
+    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed, famine);
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     const sulkFactor = sulkOf(happiness);
 
@@ -1338,7 +1342,7 @@ function frame(now: number): void {
 
     // the gentle goodbye: a long-empty belly fades a pip, and if nobody ever
     // feeds it, it shrinks and poofs into sparkles. any bite cancels everything
-    if (pip.needs.food <= 0) pip.starvingFor += dt;
+    if (pip.needs.food <= 0) pip.starvingFor += dt * famine;
     else pip.starvingFor = 0;
     if (pip.poofFor > 0 && pip.needs.food > 0) {
       pip.poofFor = 0;
