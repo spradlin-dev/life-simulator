@@ -35,7 +35,41 @@ const hud = document.getElementById('hud') as HTMLDivElement;
 const hint = document.getElementById('hint') as HTMLDivElement;
 
 // logical viewport in CSS px; the canvas backing store is scaled to the device
-const view = { w: 0, h: 0 };
+const view = { w: 0, h: 0, dpr: 1 };
+
+// the meadow is bigger than the window: pips roam the world, and the camera's
+// job is to always keep the whole family in frame
+const WORLD_SCALE = 2.5;
+const world = { w: 0, h: 0 };
+const camera = { x: 0, y: 0, scale: 1 };
+
+// faint world-anchored specks give the eye something to measure zoom against;
+// a resize rescales them in place so the reference never flickers mid-drag
+let specks: { x: number; y: number }[] = [];
+function scatterSpecks(oldW: number, oldH: number): void {
+  if (specks.length > 0 && oldW > 0 && oldH > 0) {
+    for (const s of specks) {
+      s.x = (s.x / oldW) * world.w;
+      s.y = (s.y / oldH) * world.h;
+    }
+    return;
+  }
+  specks = Array.from({ length: 70 }, () => ({
+    x: Math.random() * world.w,
+    y: Math.random() * world.h,
+  }));
+}
+
+function toWorld(sx: number, sy: number): { x: number; y: number } {
+  return {
+    x: camera.x + (sx - view.w / 2) / camera.scale,
+    y: camera.y + (sy - view.h / 2) / camera.scale,
+  };
+}
+
+// the ghost's position in the pips' world; presence/speed stay screen-truth
+// (gentleness is about how softly the HAND moves, at any zoom)
+const wp = { x: 0, y: 0 };
 
 interface Treat {
   x: number;
@@ -48,14 +82,24 @@ const treats: Treat[] = [];
 
 function resize(): void {
   const dpr = window.devicePixelRatio || 1;
+  view.dpr = dpr;
   view.w = window.innerWidth;
   view.h = window.innerHeight;
+  const oldW = world.w;
+  const oldH = world.h;
+  world.w = view.w * WORLD_SCALE;
+  world.h = view.h * WORLD_SCALE;
+  scatterSpecks(oldW, oldH);
   canvas.width = Math.round(view.w * dpr);
   canvas.height = Math.round(view.h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   for (const treat of treats) {
-    treat.x = Math.min(view.w - 30, Math.max(30, treat.x));
-    treat.y = Math.min(view.h - 30, Math.max(30, treat.y));
+    treat.x = Math.min(world.w - 30, Math.max(30, treat.x));
+    treat.y = Math.min(world.h - 30, Math.max(30, treat.y));
+  }
+  if (camera.x === 0 && camera.y === 0) {
+    camera.x = world.w / 2;
+    camera.y = world.h / 2;
   }
 }
 window.addEventListener('resize', resize);
@@ -122,8 +166,8 @@ function dropTreat(x: number, y: number): void {
   if (treats.length >= TREAT_CAP) return;
   // keep treats where a pip can physically reach them
   treats.push({
-    x: Math.min(view.w - 30, Math.max(30, x)),
-    y: Math.min(view.h - 30, Math.max(30, y)),
+    x: Math.min(world.w - 30, Math.max(30, x)),
+    y: Math.min(world.h - 30, Math.max(30, y)),
     age: 0,
     eater: null,
   });
@@ -137,6 +181,34 @@ function updateTreats(dt: number): void {
     if (treats[i].age > TREAT_LIFE) treats.splice(i, 1);
   }
   treatButton.disabled = treats.length >= TREAT_CAP;
+}
+
+// the family portrait rule: frame every pip with breathing room, zoom clamped
+// between today's intimacy (1) and the whole-world view, and always ease there
+function updateCamera(dt: number): void {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const pip of pips) {
+    minX = Math.min(minX, pip.x);
+    maxX = Math.max(maxX, pip.x);
+    minY = Math.min(minY, pip.y);
+    maxY = Math.max(maxY, pip.y);
+  }
+  const M = 90;
+  const fitScale = Math.min(view.w / (maxX - minX + M * 2), view.h / (maxY - minY + M * 2));
+  const wholeWorld = Math.max(view.w / world.w, view.h / world.h);
+  const targetScale = Math.min(1, Math.max(wholeWorld, fitScale));
+  const ease = Math.min(1, dt * 2.5);
+  camera.scale += (targetScale - camera.scale) * ease;
+  camera.x += ((minX + maxX) / 2 - camera.x) * ease;
+  camera.y += ((minY + maxY) / 2 - camera.y) * ease;
+  // never show past the world's edge, whatever the easing is mid-flight
+  const halfW = view.w / (2 * camera.scale);
+  const halfH = view.h / (2 * camera.scale);
+  camera.x = Math.min(world.w - halfW, Math.max(halfW, camera.x));
+  camera.y = Math.min(world.h - halfH, Math.max(halfH, camera.y));
 }
 
 // a berry someone else is already eating is invisible to the search — crowding
@@ -240,8 +312,8 @@ function makePip(genes: Genes, x: number, y: number, generation = 0, name = make
 
 function randomSpot(): Vec {
   return {
-    x: 80 + Math.random() * Math.max(0, view.w - 160),
-    y: 80 + Math.random() * Math.max(0, view.h - 160),
+    x: 80 + Math.random() * Math.max(0, world.w - 160),
+    y: 80 + Math.random() * Math.max(0, world.h - 160),
   };
 }
 
@@ -293,8 +365,8 @@ function updateAndDrawSparkles(dt: number): void {
 
 function clampToWorld(x: number, y: number, margin = 26): Vec {
   return {
-    x: Math.min(view.w - margin, Math.max(margin, x)),
-    y: Math.min(view.h - margin, Math.max(margin, y)),
+    x: Math.min(world.w - margin, Math.max(margin, x)),
+    y: Math.min(world.h - margin, Math.max(margin, y)),
   };
 }
 
@@ -331,7 +403,7 @@ if (saved) {
     pips.push(pip);
   }
 } else {
-  pips.push(makePip(descend(FOUNDER, 6), view.w / 2, view.h / 2));
+  pips.push(makePip(descend(FOUNDER, 6), world.w / 2, world.h / 2));
   storeSave(snapshotWorld());
 }
 
@@ -404,7 +476,7 @@ function divide(parent: Pip): Pip {
 }
 
 function distToPointerOf(pip: Pip): number {
-  return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
+  return Math.hypot(wp.x - pip.x, wp.y - pip.y);
 }
 
 // panic radiates downhill: only a MORE frightened neighbor is alarming, and only
@@ -429,7 +501,7 @@ function sensesFor(pip: Pip): Senses {
     speed: pointer.speed,
     stillFor: pointer.stillFor,
     treatDist: treat ? treat.dist : Infinity,
-    place: placeAt(pip.places, pip.x / view.w, pip.y / view.h),
+    place: placeAt(pip.places, pip.x / world.w, pip.y / world.h),
     alarm: alarmNear(pip),
   };
 }
@@ -480,14 +552,14 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
       if (!wt || Math.hypot(wt.x - pip.x, wt.y - pip.y) < 20) {
         // sample a few spots and prefer the fondest-remembered ground
         const roll = (): Vec => ({
-          x: 60 + Math.random() * Math.max(0, view.w - 120),
-          y: 60 + Math.random() * Math.max(0, view.h - 120),
+          x: 60 + Math.random() * Math.max(0, world.w - 120),
+          y: 60 + Math.random() * Math.max(0, world.h - 120),
         });
         let pick = roll();
-        let bestFeel = placeAt(pip.places, pick.x / view.w, pick.y / view.h);
+        let bestFeel = placeAt(pip.places, pick.x / world.w, pick.y / world.h);
         for (let i = 0; i < 3; i++) {
           const cand = roll();
-          const feel = placeAt(pip.places, cand.x / view.w, cand.y / view.h);
+          const feel = placeAt(pip.places, cand.x / world.w, cand.y / world.h);
           if (feel > bestFeel) {
             bestFeel = feel;
             pick = cand;
@@ -503,18 +575,18 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
     case 'curious': {
       // creeps closer in fits and starts, stopping at a respectful distance
       const stepping = Math.sin(pip.stateTime * 2.4) > -0.2;
-      if (dist > space && stepping) steerToward(pip, pointer.x, pointer.y, 260, 75, dt, sulkFactor);
+      if (dist > space && stepping) steerToward(pip, wp.x, wp.y, 260, 75, dt, sulkFactor);
       else settle(pip, dt, 5);
       if (pip.stateTime < 0.05) showEmote(pip, '?');
       break;
     }
     case 'follow': {
-      if (dist > space + 26) steerToward(pip, pointer.x, pointer.y, 500, 210, dt, sulkFactor);
+      if (dist > space + 26) steerToward(pip, wp.x, wp.y, 500, 210, dt, sulkFactor);
       else settle(pip, dt, 4);
       break;
     }
     case 'flee': {
-      const away = Math.atan2(pip.y - pointer.y, pip.x - pointer.x);
+      const away = Math.atan2(pip.y - wp.y, pip.x - wp.x);
       const wobble = Math.sin(t * 9) * 0.5;
       steerToward(
         pip,
@@ -527,11 +599,11 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
       settle(pip, dt, 10);
       break;
     case 'snuggle': {
-      if (dist > space * 0.8) steerToward(pip, pointer.x, pointer.y, 120, 40, dt, sulkFactor);
+      if (dist > space * 0.8) steerToward(pip, wp.x, wp.y, 120, 40, dt, sulkFactor);
       else settle(pip, dt, 3);
       if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote(pip, '♥');
       // shared warmth suffuses the spot itself
-      pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, dt * 0.012);
+      pip.places = markPlace(pip.places, pip.x / world.w, pip.y / world.h, dt * 0.012);
       break;
     }
     case 'snack': {
@@ -554,7 +626,7 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
         pip.munchFor += dt;
         if (pip.munchFor >= 1.2) {
           // a good meal warms the memory of where it happened
-          pip.places = markPlace(pip.places, target.treat.x / view.w, target.treat.y / view.h, 0.2);
+          pip.places = markPlace(pip.places, target.treat.x / world.w, target.treat.y / world.h, 0.2);
           treats.splice(treats.indexOf(target.treat), 1);
           pip.needs = eat(pip.needs);
           pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
@@ -591,9 +663,9 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
   // soft spring away from the edges, hard clamp as a backstop
   const m = 50;
   if (pip.x < m) pip.vx += (m - pip.x) * 60 * dt;
-  if (pip.x > view.w - m) pip.vx -= (pip.x - (view.w - m)) * 60 * dt;
+  if (pip.x > world.w - m) pip.vx -= (pip.x - (world.w - m)) * 60 * dt;
   if (pip.y < m) pip.vy += (m - pip.y) * 60 * dt;
-  if (pip.y > view.h - m) pip.vy -= (pip.y - (view.h - m)) * 60 * dt;
+  if (pip.y > world.h - m) pip.vy -= (pip.y - (world.h - m)) * 60 * dt;
 
   pip.x += pip.vx * dt;
   pip.y += pip.vy * dt;
@@ -666,19 +738,22 @@ function updateTimers(pip: Pip, dt: number, sulkFactor: number): void {
 // the touch ghost, made visible: its opacity IS the presence value the brain sees
 function drawTouchGhost(): void {
   if (pointer.kind !== 'touch' || pointer.presence <= 0) return;
-  const glow = ctx.createRadialGradient(pointer.x, pointer.y, 2, pointer.x, pointer.y, 26);
+  // screen-constant radii: the touch player's only affordance must stay findable
+  // at any zoom (pip perception uses distances, never this drawing)
+  const gr = 26 / camera.scale;
+  const glow = ctx.createRadialGradient(wp.x, wp.y, 2 / camera.scale, wp.x, wp.y, gr);
   glow.addColorStop(0, 'rgba(180, 240, 220, 0.8)');
   glow.addColorStop(1, 'rgba(180, 240, 220, 0)');
   ctx.globalAlpha = pointer.presence * 0.35;
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(pointer.x, pointer.y, 26, 0, Math.PI * 2);
+  ctx.arc(wp.x, wp.y, gr, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = pointer.presence * 0.5;
   ctx.strokeStyle = 'rgba(190, 235, 220, 0.9)';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 / camera.scale;
   ctx.beginPath();
-  ctx.arc(pointer.x, pointer.y, 18, 0, Math.PI * 2);
+  ctx.arc(wp.x, wp.y, 18 / camera.scale, 0, Math.PI * 2);
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
@@ -855,7 +930,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
 
   // fondness shows: blush blooms near a trusted watcher, brightest mid-snuggle
   const eyeY = y - 4;
-  const distNow = Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
+  const distNow = Math.hypot(wp.x - pip.x, wp.y - pip.y);
   const fondness = pip.state === 'snuggle'
     ? 1
     : pointer.presence > 0 && distNow < 260 && pip.moods.trust > 0.6
@@ -874,7 +949,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   let lookX = 0;
   let lookY = 0;
   if (pointer.presence > 0) {
-    const a = Math.atan2(pointer.y - y, pointer.x - x);
+    const a = Math.atan2(wp.y - y, wp.x - x);
     lookX = Math.cos(a) * 2.8;
     lookY = Math.sin(a) * 2.8;
   }
@@ -934,19 +1009,20 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   if (pip.emoteFor > 0) {
     const rise = (1.2 - pip.emoteFor) * 12;
     ctx.globalAlpha = Math.min(1, pip.emoteFor / 0.4);
-    ctx.font = '16px system-ui, sans-serif';
+    // labels keep their SCREEN size at any zoom — readability over diegesis
+    ctx.font = `${16 / camera.scale}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillStyle = EMOTE_COLORS[pip.emote] ?? '#dfe8f0';
-    ctx.fillText(pip.emote, x + 16, y - R - 14 - rise);
+    ctx.fillText(pip.emote, x + 16 / camera.scale, y - R - (14 + rise) / camera.scale);
   }
 
   // the name floats above everything the pip is — recognition at a glance,
   // soft enough not to shout over a crowd
   ctx.globalAlpha = bodyAlpha;
-  ctx.font = '10px ui-monospace, Consolas, monospace';
+  ctx.font = `${10 / camera.scale}px ui-monospace, Consolas, monospace`;
   ctx.textAlign = 'center';
   ctx.fillStyle = isSelected ? 'rgba(223, 232, 240, 0.95)' : 'rgba(143, 163, 184, 0.6)';
-  ctx.fillText(pip.name, x, y - lerp(30, 54, g.antLength) * pip.grown - 10);
+  ctx.fillText(pip.name, x, y - lerp(30, 54, g.antLength) * pip.grown - 10 / camera.scale);
   ctx.globalAlpha = 1;
 }
 
@@ -1054,7 +1130,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if ((e.key === 'f' || e.key === 'F') && pointer.presence > 0) {
-    dropTreat(pointer.x, pointer.y);
+    dropTreat(wp.x, wp.y);
     return;
   }
   if (e.key !== 'Tab' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -1140,6 +1216,11 @@ function frame(now: number): void {
   const t = now / 1000;
 
   input.update(dt);
+  {
+    const w = toWorld(pointer.x, pointer.y);
+    wp.x = w.x;
+    wp.y = w.y;
+  }
   updateTreats(dt);
 
   sinceSave += dt;
@@ -1153,14 +1234,15 @@ function frame(now: number): void {
   // crossing and scars the place where it happened
   const fearAtFrameStart = pips.map((pip) => pip.moods.fear);
   for (const k of knocks) {
+    const kw = toWorld(k.x, k.y);
     if (treatArmed) {
-      dropTreat(k.x, k.y);
+      dropTreat(kw.x, kw.y);
       break; // discard this frame's remaining knocks — feeding intent shouldn't startle
     }
     for (const pip of pips) {
       const before = pip.moods.fear;
       const expressed = effectiveGenes(pip.genes, pip.disp);
-      pip.moods = knock(pip.moods, expressed, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
+      pip.moods = knock(pip.moods, expressed, Math.hypot(kw.x - pip.x, kw.y - pip.y), k.strength);
       if (pip.moods.fear > before) showEmote(pip, '!');
     }
   }
@@ -1204,7 +1286,7 @@ function frame(now: number): void {
     if (wasWary >= WARY_AT && pip.disp.wariness < WARY_AT) pip.celebrate = true;
     pip.places = fadePlaces(pip.places, dt);
     if (pip.moods.fear > 0.6 && fearAtFrameStart[i] <= 0.6) {
-      pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, -0.34);
+      pip.places = markPlace(pip.places, pip.x / world.w, pip.y / world.h, -0.34);
     }
 
     act(pip, dt, t, expressed, sulkFactor);
@@ -1277,7 +1359,20 @@ function frame(now: number): void {
     storeSave(snapshotWorld());
   }
 
+  updateCamera(dt);
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
   ctx.clearRect(0, 0, view.w, view.h);
+  ctx.setTransform(
+    view.dpr * camera.scale, 0, 0, view.dpr * camera.scale,
+    view.dpr * (view.w / 2 - camera.x * camera.scale),
+    view.dpr * (view.h / 2 - camera.y * camera.scale),
+  );
+  ctx.fillStyle = 'rgba(96, 116, 136, 0.22)';
+  for (const s of specks) {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
   drawTouchGhost();
   drawTreats(t);
   updateAndDrawSparkles(dt);
