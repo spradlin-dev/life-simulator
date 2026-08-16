@@ -47,7 +47,7 @@ export const GENE_FIELDS = Object.keys(GENE_FIELD_SET) as readonly (keyof Genes)
 // exactly. hue/sat/light drift separately with their own sigmas, and the
 // Exclude keeps them out at compile time — a new gene MUST land here or the
 // build fails, so no dial can ever be silently frozen out of mutation
-type DialField = Exclude<keyof Genes, 'hue' | 'sat' | 'light'>;
+export type DialField = Exclude<keyof Genes, 'hue' | 'sat' | 'light'>;
 const DIAL_FIELD_SET: Record<DialField, true> = {
   boldness: true,
   clinginess: true,
@@ -94,6 +94,11 @@ const LIGHT_SIGMA = 3;
 
 const clampRange = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+// the saturation and lightness a pip may wear, chosen for readability on the
+// dark meadow; everything that produces color genes funnels into these
+export const SAT_RANGE = [35, 85] as const;
+export const LIGHT_RANGE = [48, 75] as const;
+
 // snap arbitrary numbers back into legal gene ranges — the single owner of what
 // values a gene may hold (mutation drift and save-loading both funnel through here)
 export function sanitizeGenes(g: Genes): Genes {
@@ -103,8 +108,8 @@ export function sanitizeGenes(g: Genes): Genes {
     nosiness: clamp01(g.nosiness),
     liveliness: clamp01(g.liveliness),
     hue: ((g.hue % 360) + 360) % 360,
-    sat: clampRange(g.sat, 35, 85),
-    light: clampRange(g.light, 48, 75),
+    sat: clampRange(g.sat, SAT_RANGE[0], SAT_RANGE[1]),
+    light: clampRange(g.light, LIGHT_RANGE[0], LIGHT_RANGE[1]),
     size: clamp01(g.size),
     roundness: clamp01(g.roundness),
     antLength: clamp01(g.antLength),
