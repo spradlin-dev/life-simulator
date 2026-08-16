@@ -49,8 +49,10 @@ const arcDist = (a: number, b: number): number => {
 const GRID = 1 / 36;
 const DIAL_TOL = 1.5 * GRID + 1e-9;
 
-// decoder v1, pinned forever: this exact strand must decode to these exact
-// stats in every future version, or a re-encode migration is owed
+// decoder v2, pinned: this exact strand must decode to these exact stats in
+// every future version, or a re-encode migration is owed. The founder
+// literals are v1's, carried unchanged — canonical strands read each stat
+// once, and a single read does not feel echo weighting
 const GOLDEN_STRAND =
   'AGGGGGGGGCCCCCCGATTGGGGGGCCCCCCAATGGGGGGCCCCCCGATCGGGGGGCCCCCCCCTGGGGGGCCCCCCGCTTGGGGGGCCCCCCACTGGGGGGCCCCCCCATGGGGGGCCCCCCGCTCGGGGGGCCCCCCGAAGCCCCCCGGGGGGAGCCCCCCGGGGGGTCCGGGGGGCCCCCCGTCTGGGGGGCCCCCCGTATGGGGGGCCCCCCGTTCGCCCCCCCCCCCGTGACCCCGGGGGGGGGCACCAAAAAAAAAAGTAGTGGGGGGGGGGG';
 const GOLDEN_GENES: Genes = {
@@ -73,9 +75,9 @@ const GOLDEN_GENES: Genes = {
   playfulness: 0.5,
 };
 
-describe('golden decoder v1', () => {
+describe('golden decoder v2', () => {
   it('pins the founder strand and its decoded stats forever', () => {
-    expect(DECODER_VERSION).toBe(1);
+    expect(DECODER_VERSION).toBe(2);
     expect(FOUNDER_STRAND).toBe(GOLDEN_STRAND);
     expect(decode(FOUNDER_STRAND)).toEqual(GOLDEN_GENES);
   });
@@ -132,12 +134,25 @@ describe('decode', () => {
     expect(g.light).toBe(61.5);
   });
 
-  it('duplicate tags average their bodies', () => {
+  it('duplicate tags blend: the first read leads, the echo whispers', () => {
     const strand = 'AGG' + 'AAAAAAAAAAAA' + 'AGG' + 'GGGGGGCCCCCC';
     const g = decode(strand);
-    expect(g.boldness).toBe(0.25);
+    expect(g.boldness).toBeCloseTo((0 + 0.5 * 0.35) / 1.35, 12);
     expect(g.nosiness).toBe(0.5);
     expect(g.hue).toBe(FOUNDER.hue);
+  });
+
+  it('killing the lead tag promotes the echo to full voice', () => {
+    const lead = 'AGG' + 'AAAAAAAAAAAA' + 'AGG' + 'GGGGGGCCCCCC';
+    const broken = 'AGT' + lead.slice(3);
+    expect(decode(lead).boldness).toBeCloseTo((0 + 0.5 * 0.35) / 1.35, 12);
+    expect(decode(broken).boldness).toBe(0.5);
+  });
+
+  it('each further echo is geometrically quieter', () => {
+    const strand = 'AGG' + 'AAAAAAAAAAAA' + 'AGG' + 'GGGGGGCCCCCC' + 'AGG' + 'TTTTTTTTTTTT';
+    const expected = (0 + 0.5 * 0.35 + 1 * 0.35 * 0.35) / (1 + 0.35 + 0.35 * 0.35);
+    expect(decode(strand).boldness).toBeCloseTo(expected, 12);
   });
 
   it('one substitution shifts one stat by at most 3/36 and nothing else', () => {
@@ -162,16 +177,17 @@ describe('decode', () => {
     const awake = dormant.slice(0, -13) + 'G' + dormant.slice(-12);
     expect(readsOf(awake).length).toBe(19);
     const g = decode(awake);
-    expect(g.boldness).toBe(0.75);
+    expect(g.boldness).toBeCloseTo((0.5 + 1 * 0.35) / 1.35, 12);
     expect({ ...g, boldness: 0.5 }).toEqual(GOLDEN_GENES);
   });
 
-  it('a hue vector of pure float noise falls back to founder mint', () => {
-    // three hueX bodies averaging to 0.5 plus a hair of float error, and a
-    // clean 0.5 hueY: the noise must not decode as a real angle (hue 0, red)
+  it('a hue vector too weak to mean anything falls back to founder mint', () => {
+    // duplicate mid hueX reads and a mid hueY: the weighted blend lands on the
+    // 0.5 midpoint exactly, and a zero-length vector has no angle to claim —
+    // the magnitude sentinel guards exact zero and float residue alike
     const strand =
-      'GCA' + 'CCCCCCCCAAAA' + 'GCA' + 'GTTTTTTTGGGG' + 'GCA' + 'CCCCCCCCCGGG' + 'TAG' + 'CGGGGGGCCCCC';
-    expect(readsOf(strand).length).toBe(4);
+      'TAG' + 'CCCCCCGGGGGG' + 'GCA' + 'CCCCCCGGGGGG' + 'GCA' + 'CCCCCCGGGGGG';
+    expect(readsOf(strand).length).toBe(3);
     expect(decode(strand).hue).toBe(FOUNDER.hue);
   });
 

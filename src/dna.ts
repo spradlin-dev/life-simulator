@@ -17,11 +17,11 @@ import {
 // Genes are marker-based, not positional: a 3-base tag announces a stat and
 // the 12 bases after it are the body, whose letter-value sum scales to 0..1 —
 // so mid values are common, extremes rare, and one substitution nudges a stat
-// by at most 3/36. Duplicate tags average; a missing tag reads as the
-// classic-pip midpoint. Untagged stretches are junk, where near-tags sleep
-// one mutation away from waking.
+// by at most 3/36. Duplicate tags blend with the first read loudest; a
+// missing tag reads as the classic-pip midpoint. Untagged stretches are junk,
+// where near-tags sleep one mutation away from waking.
 
-export const DECODER_VERSION = 1;
+export const DECODER_VERSION = 2;
 
 const BASES = 'ACGT';
 const TAG_LEN = 3;
@@ -152,20 +152,31 @@ export function annotate(strand: string): StrandSpan[] {
   return spans;
 }
 
-// strand → the Genes struct everything else runs on. Duplicate tags average
-// (bounded, unlike summing); a stat with no tag at all defaults to the 0.5
-// midpoint, so deletion reverts toward the classic pip instead of crashing
+// how loudly a duplicate read speaks: the first read of a stat is the voice,
+// every echo behind it geometrically quieter. Equal averaging (decoder v1)
+// let accumulating echoes regress every stat to the middle at deep time; the
+// whisper keeps lineage diversity alive while echoes still drift as latent
+// variation — and a promoted echo speaks at full voice when its lead tag dies
+const ECHO_WEIGHT = 0.35;
+
+// strand → the Genes struct everything else runs on. Duplicate tags blend
+// (echo-weighted, bounded); a stat with no tag at all defaults to the 0.5
+// midpoint, so total deletion reverts toward the classic pip, never a crash
 export function decode(strand: string): Genes {
   const total: Partial<Record<DnaStat, number>> = {};
-  const hits: Partial<Record<DnaStat, number>> = {};
+  const weight: Partial<Record<DnaStat, number>> = {};
+  const echoes: Partial<Record<DnaStat, number>> = {};
   for (const read of readsOf(strand)) {
-    total[read.stat] = (total[read.stat] ?? 0) + read.value;
-    hits[read.stat] = (hits[read.stat] ?? 0) + 1;
+    const rank = echoes[read.stat] ?? 0;
+    const w = ECHO_WEIGHT ** rank;
+    total[read.stat] = (total[read.stat] ?? 0) + read.value * w;
+    weight[read.stat] = (weight[read.stat] ?? 0) + w;
+    echoes[read.stat] = rank + 1;
   }
   const stat = {} as Record<DnaStat, number>;
   for (const s of STAT_ORDER) {
-    const n = hits[s] ?? 0;
-    stat[s] = n > 0 ? (total[s] ?? 0) / n : 0.5;
+    const w = weight[s] ?? 0;
+    stat[s] = w > 0 ? (total[s] ?? 0) / w : 0.5;
   }
   const dx = stat.hueX - 0.5;
   const dy = stat.hueY - 0.5;
