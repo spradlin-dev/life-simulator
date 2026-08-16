@@ -158,7 +158,7 @@ const treatButton = document.getElementById('treat-button') as HTMLButtonElement
 shieldFromWorld(treatButton);
 
 // feeding at flock scale: hold F (desktop) to rain berries where you drag,
-// hold the berry button (touch) to rain them across the whole meadow.
+// hold the berry button (touch) to rain them across what the camera can see.
 // a quick tap on the button still arms one precise berry
 const RAIN_EVERY = 0.08;
 let fRainHeld = false;
@@ -242,10 +242,16 @@ function updateCamera(dt: number): void {
   camera.x += ((minX + maxX) / 2 - camera.x) * ease;
   camera.y += ((minY + maxY) / 2 - camera.y) * ease;
   // never show past the world's edge, whatever the easing is mid-flight
-  const halfW = view.w / (2 * camera.scale);
-  const halfH = view.h / (2 * camera.scale);
+  const { halfW, halfH } = visibleHalfExtent();
   camera.x = Math.min(world.w - halfW, Math.max(halfW, camera.x));
   camera.y = Math.min(world.h - halfH, Math.max(halfH, camera.y));
+}
+
+// half the world-space extent the camera currently shows. The edge clamp above
+// and the rain sampler must agree on this rect exactly — the rain-stays-where-
+// pips-are guarantee rests on it
+function visibleHalfExtent(): { halfW: number; halfH: number } {
+  return { halfW: view.w / (2 * camera.scale), halfH: view.h / (2 * camera.scale) };
 }
 
 // a berry someone else is already eating is invisible to the search — crowding
@@ -1341,7 +1347,10 @@ function frame(now: number): void {
       rainTimer += RAIN_EVERY;
       if (fRainHeld && pointer.presence > 0) dropTreat(wp.x, wp.y);
       else if (buttonRainHeld) {
-        dropTreat(30 + Math.random() * (world.w - 60), 30 + Math.random() * (world.h - 60));
+        // rain only where the camera looks: the frame already holds every
+        // pip, and a berry outside it would only expire unseen
+        const { halfW, halfH } = visibleHalfExtent();
+        dropTreat(camera.x - halfW + Math.random() * halfW * 2, camera.y - halfH + Math.random() * halfH * 2);
       }
     }
   } else {
