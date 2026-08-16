@@ -1,5 +1,5 @@
 import { clamp01 } from './math.ts';
-import { decode, mutateGenome } from './dna.ts';
+import { copyStrand, decode } from './dna.ts';
 import type { Genes } from './genes.ts';
 import type { Needs } from './needs.ts';
 
@@ -27,16 +27,19 @@ export interface PipCore {
   generation: number;
 }
 
-// one pip becomes two: each daughter's strand drifts independently from the
-// parent's and her stats are read fresh from it — heredity IS the genome, so
-// the parent's genes are not even accepted here — and the meal that fueled
-// the division is shared between them
+// one pip becomes two: each daughter's strand is copied by the trembling
+// copyist against the comfort the parent felt across the swell, and her
+// stats are read fresh from it — heredity IS the genome, so the parent's
+// genes are not even accepted here — and the meal that fueled the division
+// is shared between them. Both daughters ride the same trace: sisters of a
+// warm moment share correlated wildness
 export function splitOutcome(
   core: Omit<PipCore, 'genes'>,
+  comfort: readonly number[],
   rand: () => number = Math.random,
 ): [PipCore, PipCore] {
   const daughter = (): PipCore => {
-    const strand = mutateGenome(core.strand, rand);
+    const strand = copyStrand(core.strand, comfort, rand);
     return {
       genes: decode(strand),
       strand,

@@ -10,9 +10,10 @@ import {
 } from './genes.ts';
 
 // The genome: a strand of ACGT sitting strictly upstream of Genes. Only
-// division touches it — mutateGenome drifts the strand, decode turns it into
-// the Genes struct the rest of the game already runs on. Installing or
-// removing this module is one producer swap; nothing downstream reads DNA.
+// reproduction touches it — copyStrand carries it through live division,
+// drift seeds unseen generations, decode turns it into the Genes struct the
+// rest of the game already runs on. Installing or removing this module is
+// one producer swap; nothing downstream reads DNA.
 //
 // Genes are marker-based, not positional: a 3-base tag announces a stat and
 // the 12 bases after it are the body, whose letter-value sum scales to 0..1 —
@@ -287,8 +288,8 @@ export const FOUNDER_STRAND = encode(FOUNDER);
 export const STRAND_MIN = 60;
 export const STRAND_MAX = 1200;
 
-// expected substitutions per division on a founder-length strand; the rate is
-// per base, so a bloated strand pays for its length in mutation load
+// expected substitutions per drift generation on a founder-length strand; the
+// rate is per base, so a bloated strand pays for its length in mutation load
 const SUB_RATE = 2.5 / FOUNDER_STRAND.length;
 const INDEL_RATE = 0.03;
 const DUP_RATE = 0.01;
@@ -304,10 +305,11 @@ export function isValidStrand(strand: unknown): strand is string {
   );
 }
 
-// one division's worth of drift: point substitutions, then possibly a small
-// indel, a tandem duplication, a deletion — each op skipped rather than
-// clamped when it would leave the length bounds. Crossover deliberately does
-// not exist: mitosis has a single parent.
+// one unseen generation's worth of drift: point substitutions, then possibly
+// a small indel, a tandem duplication, a deletion — each op skipped rather
+// than clamped when it would leave the length bounds. Live division copies
+// through copyStrand instead. Crossover deliberately does not exist: mitosis
+// has a single parent.
 export function mutateGenome(strand: string, rand: () => number = Math.random): string {
   const bases = strand.split('');
   for (let i = 0; i < bases.length; i++) {
@@ -349,9 +351,67 @@ export function mutateGenome(strand: string, rand: () => number = Math.random): 
 }
 
 // a strand several unseen generations away: flock seeding and wander-ins
-// drift the founder's strand the same way division does
+// run the founder's strand through the neutral model, one pass per generation
 export function drift(strand: string, generations: number, rand: () => number = Math.random): string {
   let s = strand;
   for (let i = 0; i < generations; i++) s = mutateGenome(s, rand);
   return s;
+}
+
+// the trembling copyist: how warm the copying machinery idles (a body at
+// zero comfort still hums faintly) and how much each degree of comfort
+// shakes it. At a flat mid-comfort trace the expected slip load matches the
+// drift operators' historical average; terror copies near-perfectly, bliss
+// copies about twice as loosely
+const COPY_BASE = 0.002;
+const COPY_WARMTH = 0.015;
+
+// division's strand copy as an analog process: a read head walks the strand
+// while the parent's comfort trace (sampled across the real seconds of the
+// swell) feeds a wobble accumulator — warmth hums, fear grips. When wobble
+// crests, the head slips at its current position: a miscopied letter, a
+// stutter (it re-copies the run it just wrote), or a skip (letters never
+// copied). Nobody sets a mutation rate; fidelity falls out of comfort over
+// time, which is why errors cluster where comfort peaked and daughters of
+// the same golden swell share correlated wildness
+export function copyStrand(
+  strand: string,
+  comfort: readonly number[],
+  rand: () => number = Math.random,
+): string {
+  let out = '';
+  // the head starts with a random partial charge, so the first slip is as
+  // likely early on the strand as late — an empty accumulator would leave a
+  // cold zone at the strand's head where genes never drift
+  let wobble = rand();
+  for (let pos = 0; pos < strand.length; pos++) {
+    const felt = comfort.length
+      ? clamp01(comfort[Math.min(comfort.length - 1, Math.floor((pos / strand.length) * comfort.length))])
+      : 0.5;
+    wobble += (COPY_BASE + felt * COPY_WARMTH) * (0.5 + rand());
+    const letter = strand[pos];
+    if (wobble < 1) {
+      out += letter;
+      continue;
+    }
+    wobble -= 1;
+    const kind = rand();
+    if (kind < 0.981) {
+      const others = BASES.replace(letter, '');
+      out += others[Math.floor(rand() * others.length)];
+    } else if (kind < 0.991) {
+      out += letter;
+      const r = rand();
+      const n = 1 + Math.floor(r * r * 24);
+      if (n <= out.length && out.length + n + (strand.length - pos - 1) <= STRAND_MAX) {
+        out += out.slice(-n);
+      }
+    } else {
+      out += letter;
+      const r = rand();
+      const n = 1 + Math.floor(r * r * 15);
+      if (out.length + (strand.length - pos - 1) - n >= STRAND_MIN) pos += n;
+    }
+  }
+  return out;
 }

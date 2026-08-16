@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   annotate,
+  copyStrand,
   DECODER_VERSION,
   decode,
   drift,
@@ -282,6 +283,81 @@ describe('drift', () => {
     expect(a).toBe(drift(FOUNDER_STRAND, 6, lcg(9)));
     expect(isValidStrand(a)).toBe(true);
     expect(a).not.toBe(FOUNDER_STRAND);
+  });
+});
+
+describe('copyStrand', () => {
+  it('a body at zero comfort copies rigidly: the perfect clone', () => {
+    // pre-charge scripted to zero; cold accumulation alone cannot cross
+    expect(copyStrand(FOUNDER_STRAND, [0], rolls({ 0: 0 }, 0.5))).toBe(FOUNDER_STRAND);
+  });
+
+  it('an empty trace reads as mid comfort', () => {
+    const out = copyStrand(FOUNDER_STRAND, [], rolls({ 0: 0 }, 0.5));
+    expect(out.length).toBe(FOUNDER_STRAND.length);
+    const diffs = [...out].filter((c, i) => c !== FOUNDER_STRAND[i]).length;
+    expect(diffs).toBeGreaterThan(0);
+    expect(diffs).toBeLessThanOrEqual(3);
+  });
+
+  it('warmth loosens the copy, and the same seed repeats it exactly', () => {
+    const warm = copyStrand(FOUNDER_STRAND, [1], lcg(11));
+    expect(copyStrand(FOUNDER_STRAND, [1], lcg(11))).toBe(warm);
+    const countDiffs = (s: string) =>
+      s.length === FOUNDER_STRAND.length ? [...s].filter((c, i) => c !== FOUNDER_STRAND[i]).length : 99;
+    const cool = copyStrand(FOUNDER_STRAND, [0.1], lcg(11));
+    expect(countDiffs(warm)).toBeGreaterThan(countDiffs(cool));
+  });
+
+  it('slips cluster where comfort peaked: errors have geography', () => {
+    // the warm middle third shakes the head ~8x harder than the cold ends
+    const out = copyStrand(FOUNDER_STRAND, [0, 1, 0], lcg(5));
+    const n = Math.min(out.length, FOUNDER_STRAND.length);
+    const diffs: number[] = [];
+    for (let i = 0; i < n; i++) if (out[i] !== FOUNDER_STRAND[i]) diffs.push(i);
+    expect(diffs.length).toBeGreaterThan(0);
+    expect(diffs.some((i) => i >= 93 && i < 186)).toBe(true);
+  });
+
+  it('a stutter re-copies the run just written, in place', () => {
+    // pre-charge zero, warm first fifth, one jitter nudge to dodge a float
+    // tie: exactly one slip, at letter 79 in the cold run-out
+    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.985, 82: 0 }, 0.5));
+    expect(out).toBe(FOUNDER_STRAND.slice(0, 80) + FOUNDER_STRAND[79] + FOUNDER_STRAND.slice(80));
+  });
+
+  it('a skip leaves letters the head never copied', () => {
+    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.999, 82: 0 }, 0.5));
+    expect(out).toBe(FOUNDER_STRAND.slice(0, 80) + FOUNDER_STRAND.slice(81));
+  });
+
+  it('a miscopy changes exactly one letter at the slip', () => {
+    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.5, 82: 0 }, 0.5));
+    expect(out.length).toBe(FOUNDER_STRAND.length);
+    const diffs = [...out].map((c, i) => (c !== FOUNDER_STRAND[i] ? i : -1)).filter((i) => i >= 0);
+    expect(diffs).toEqual([79]);
+  });
+
+  it('a head born nearly crested slips on the very first letter: no cold zone', () => {
+    // charge 0.99 + one mid-comfort step crosses at position 0
+    const out = copyStrand(FOUNDER_STRAND, [0.5], rolls({ 0: 0.99, 1: 0.6, 2: 0.5, 3: 0 }, 0.5));
+    expect(out.length).toBe(FOUNDER_STRAND.length);
+    expect(out[0]).not.toBe(FOUNDER_STRAND[0]);
+  });
+
+  it('a stutter at the fat cap is swallowed, never copied past STRAND_MAX', () => {
+    const fat = 'ACGT'.repeat(STRAND_MAX / 4);
+    // warm only the first letter: one scripted slip there, a big stutter roll
+    const trace = [...fat].map((_, i) => (i === 0 ? 1 : 0));
+    const out = copyStrand(fat, trace, rolls({ 0: 0.99, 1: 0.6, 2: 0.985, 3: 0.9 }, 0));
+    expect(out.length).toBe(STRAND_MAX);
+  });
+
+  it('a skip at the thin floor is swallowed, never dropping below STRAND_MIN', () => {
+    const thin = 'ACGT'.repeat(STRAND_MIN / 4);
+    const trace = [...thin].map((_, i) => (i === 0 ? 1 : 0));
+    const out = copyStrand(thin, trace, rolls({ 0: 0.99, 1: 0.6, 2: 0.995, 3: 0.9 }, 0));
+    expect(out).toBe(thin);
   });
 });
 

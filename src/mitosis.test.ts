@@ -66,7 +66,7 @@ describe('splitChance', () => {
 
 describe('splitOutcome', () => {
   it('shares the meal: both daughters get half the food, other needs intact', () => {
-    const [a, b] = splitOutcome(core);
+    const [a, b] = splitOutcome(core, [0.5]);
     expect(a.needs.food).toBeCloseTo(0.4);
     expect(b.needs.food).toBeCloseTo(0.4);
     expect(a.needs.rest).toBe(0.6);
@@ -74,15 +74,15 @@ describe('splitOutcome', () => {
   });
 
   it('advances the lineage on both sides', () => {
-    const [a, b] = splitOutcome(core);
+    const [a, b] = splitOutcome(core, [0.5]);
     expect(a.generation).toBe(3);
     expect(b.generation).toBe(3);
   });
 
   it('drifts each strand independently', () => {
-    // a live division can legitimately copy a strand untouched (~8% per
-    // daughter), so independence is pinned under a seed that mutates both
-    const [a, b] = splitOutcome(core, lcg(3));
+    // a live division can legitimately copy a strand untouched, so
+    // independence is pinned under a seed that mutates both daughters
+    const [a, b] = splitOutcome(core, [0.5], lcg(3));
     expect(a.strand).not.toBe(core.strand);
     expect(b.strand).not.toBe(core.strand);
     expect(a.strand).not.toBe(b.strand);
@@ -91,16 +91,29 @@ describe('splitOutcome', () => {
   });
 
   it('each daughter is exactly the decode of her own strand', () => {
-    const [a, b] = splitOutcome(core, lcg(3));
+    const [a, b] = splitOutcome(core, [0.5], lcg(3));
     expect(a.genes).toEqual(decode(a.strand));
     expect(b.genes).toEqual(decode(b.strand));
     expect(isValidStrand(a.strand)).toBe(true);
     expect(isValidStrand(b.strand)).toBe(true);
   });
 
+  it('a terrified swell copies near-perfect clones; a blissful one drifts', () => {
+    // scripted zero pre-charge for each daughter's copy head (calls 0 and 284)
+    const rigid = (overrides: Record<number, number>) => {
+      let i = 0;
+      return () => overrides[i++] ?? 0.5;
+    };
+    const [rigidA, rigidB] = splitOutcome(core, [0], rigid({ 0: 0, 284: 0 }));
+    expect(rigidA.strand).toBe(core.strand);
+    expect(rigidB.strand).toBe(core.strand);
+    const [warm] = splitOutcome(core, [1], lcg(9));
+    expect(warm.strand).not.toBe(core.strand);
+  });
+
   it('keeps every gene inside its legal range', () => {
     for (let i = 0; i < 50; i++) {
-      const [a] = splitOutcome(core);
+      const [a] = splitOutcome(core, [0.5]);
       for (const field of GENE_FIELDS) {
         expect(Number.isFinite(a.genes[field])).toBe(true);
       }
@@ -113,7 +126,7 @@ describe('splitOutcome', () => {
 
   it('does not touch the parent core', () => {
     const before = JSON.stringify(core);
-    splitOutcome(core);
+    splitOutcome(core, [0.5]);
     expect(JSON.stringify(core)).toBe(before);
   });
 });

@@ -329,6 +329,7 @@ interface Pip {
   name: string;
   grown: number;
   splitFor: number;
+  swellComfort: number[];
   sinceSplit: number;
   starvingFor: number;
   poofFor: number;
@@ -364,6 +365,7 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     name,
     grown: 1,
     splitFor: 0,
+    swellComfort: [],
     // scattered readiness at creation, so a fresh or reloaded flock never
     // arrives synchronized (a newborn's 0 is set by divide)
     sinceSplit: SPLIT_COOLDOWN * (0.35 + Math.random() * 0.65),
@@ -549,7 +551,8 @@ function divide(parent: Pip): Pip {
     strand: parent.strand,
     needs: parent.needs,
     generation: parent.generation,
-  });
+  }, parent.swellComfort);
+  parent.swellComfort = [];
   const angle = Math.random() * Math.PI * 2;
   const at = clampToWorld(parent.x + Math.cos(angle) * 20, parent.y + Math.sin(angle) * 20);
   const kid = makePip(b.genes, b.strand, at.x, at.y, b.generation);
@@ -1495,8 +1498,12 @@ function frame(now: number): void {
     if (pip.splitFor > 0) {
       if (!settled) {
         pip.splitFor = 0; // a scare aborts the division
+        pip.swellComfort = [];
         reserved--;
       } else {
+        // the copyist listens across the whole swell: what the body feels in
+        // these seconds decides how faithfully the strand is copied
+        pip.swellComfort.push(happiness);
         pip.splitFor -= dt;
         if (pip.splitFor <= 0) {
           born.push(divide(pip));
@@ -1510,6 +1517,7 @@ function frame(now: number): void {
       Math.random() < splitChance(happiness, pip.sinceSplit, dt, fecund)
     ) {
       pip.splitFor = SPLIT_SWELL_S;
+      pip.swellComfort = [];
       reserved++;
     }
   }
