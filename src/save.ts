@@ -39,7 +39,6 @@ export interface PipSave {
 
 export interface WorldSave {
   pips: PipSave[];
-  lock: boolean;
 }
 
 // one storage slot per world: the meadow is the real game, the terrarium is
@@ -54,9 +53,9 @@ export type SaveKey = (typeof SAVE_KEYS)[keyof typeof SAVE_KEYS];
 // flock — it is a tamper belt, not a gameplay wall
 export const MAX_SAVED_PIPS = 3000;
 
-export function serialize(pips: readonly LivePip[], lock: boolean): string {
+export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 9, decoder: DECODER_VERSION, lock, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 10, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -65,22 +64,18 @@ function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[
   );
 }
 
-// the shared per-pip core: genes + trust, present in every version
-// (saves written before a gene existed get its midpoint — a 0.5 dial IS the
-// classic pip, so old friends come back looking exactly like themselves)
-function parseCore(
-  d: Record<string, unknown>,
-  fillLegacyGenes: boolean,
-): { genes: Genes; trust: number } | null {
+// the shared per-pip core: genes + trust, present in every version. Any
+// gene missing from the entry fills at its midpoint, whatever the version:
+// a save is always older than the genes added after it was written, and a
+// 0.5 dial IS the classic pip — old friends come back looking exactly like
+// themselves, never rejected for predating a trait
+function parseCore(d: Record<string, unknown>): { genes: Genes; trust: number } | null {
   if (typeof d.genes !== 'object' || d.genes === null) return null;
-  let g = d.genes as Record<string, unknown>;
-  if (fillLegacyGenes) {
-    const filled: Record<string, unknown> = { ...g };
-    for (const field of GENE_FIELDS) {
-      if (filled[field] === undefined) filled[field] = 0.5;
-    }
-    g = filled;
+  const filled: Record<string, unknown> = { ...(d.genes as Record<string, unknown>) };
+  for (const field of GENE_FIELDS) {
+    if (filled[field] === undefined) filled[field] = 0.5;
   }
+  const g = filled;
   if (!allFiniteNumbers(g, GENE_FIELDS)) return null;
   if (typeof d.trust !== 'number' || !Number.isFinite(d.trust)) return null;
   return { genes: sanitizeGenes(g as unknown as Genes), trust: clamp01(d.trust) };
@@ -121,13 +116,10 @@ function parseMemories(
 
 // a complete modern pip entry (roster entries carry every structural field;
 // generation and name are versioned separately)
-function parseFullPip(
-  entry: unknown,
-  fillLegacyGenes: boolean,
-): Omit<PipSave, 'generation' | 'name' | 'strand'> | null {
+function parseFullPip(entry: unknown): Omit<PipSave, 'generation' | 'name' | 'strand'> | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const d = entry as Record<string, unknown>;
-  const core = parseCore(d, fillLegacyGenes);
+  const core = parseCore(d);
   if (!core) return null;
   const np = parseNeedsAndPos(d);
   if (!np) return null;
@@ -149,13 +141,13 @@ export function parseSave(raw: string): WorldSave | null {
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
   // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
-  // genome, v8 the feeder lock); future versions must keep MIGRATING — a pip
-  // must never be lost
-  if (d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  // genome, v8 the feeder lock, v9 stored the lock, v10 retired it); future
+  // versions must keep MIGRATING — a pip must never be lost
+  if (d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
-      const pip = parseFullPip(entry, d.v < 7);
+      const pip = parseFullPip(entry);
       if (!pip) return null;
       let generation = 0;
       if (d.v !== 4) {
@@ -174,12 +166,12 @@ export function parseSave(raw: string): WorldSave | null {
         d.v >= 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
       pips.push({ ...pip, strand, generation, name });
     }
-    // the feeder lock is a setting, not a creature: tampered values just unlock
-    return { pips, lock: d.v === 9 && d.lock === true };
+    // v9's feeder lock is retired: whatever a save says about it is ignored
+    return { pips };
   }
   if (d.v !== 1 && d.v !== 2 && d.v !== 3) return null;
 
-  const core = parseCore(d, true);
+  const core = parseCore(d);
   if (!core) return null;
   let needs: Needs = { ...FRESH_NEEDS };
   let pos: { x: number; y: number } | null = null;
@@ -201,7 +193,6 @@ export function parseSave(raw: string): WorldSave | null {
     pips: [
       { ...core, strand: encode(core.genes), needs, pos, disp, places, generation: 0, name: makeName() },
     ],
-    lock: false,
   };
 }
 
@@ -222,9 +213,9 @@ export function clearSave(key: SaveKey): void {
   }
 }
 
-export function storeSave(pips: readonly LivePip[], lock: boolean, key: SaveKey): void {
+export function storeSave(pips: readonly LivePip[], key: SaveKey): void {
   try {
-    localStorage.setItem(key, serialize(pips, lock));
+    localStorage.setItem(key, serialize(pips));
   } catch {
     // storage unavailable (private mode, quota) — the pips just live for the session
   }

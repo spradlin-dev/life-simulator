@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN, SPLIT_MAX_RATE } from './mitosis.ts';
 import { FOUNDER, GENE_FIELDS } from './genes.ts';
-import { decode, FOUNDER_STRAND, isValidStrand } from './dna.ts';
+import { decode, isValidStrand } from './dna.ts';
 
 // deterministic 32-bit LCG; Math.imul keeps every step exact
 function lcg(seed: number): () => number {
@@ -12,11 +12,17 @@ function lcg(seed: number): () => number {
   };
 }
 
+// the decoder v2 founder, frozen: the scripted rigid-swell test charges the
+// copy heads by exact call index, so this fixture must never change length
+// when the living founder gains a gene. Junk-extended so inheritance is
+// observable: a daughter spelled from the parent keeps this length, one
+// wrongly spelled from the founder cannot
+const FIXTURE_STRAND =
+  'AGGGGGGGGCCCCCCGATTGGGGGGCCCCCCAATGGGGGGCCCCCCGATCGGGGGGCCCCCCCCTGGGGGGCCCCCCGCTTGGGGGGCCCCCCACTGGGGGGCCCCCCCATGGGGGGCCCCCCGCTCGGGGGGCCCCCCGAAGCCCCCCGGGGGGAGCCCCCCGGGGGGTCCGGGGGGCCCCCCGTCTGGGGGGCCCCCCGTATGGGGGGCCCCCCGTTCGCCCCCCCCCCCGTGACCCCGGGGGGGGGCACCAAAAAAAAAAGTAGTGGGGGGGGGGG';
+
 const core = {
   genes: FOUNDER,
-  // junk-extended so inheritance is observable: a daughter spelled from the
-  // parent keeps this length, one wrongly spelled from the founder cannot
-  strand: FOUNDER_STRAND + 'AAAA',
+  strand: FIXTURE_STRAND + 'AAAA',
   needs: { food: 0.8, rest: 0.6, fun: 0.9 },
   generation: 2,
 };

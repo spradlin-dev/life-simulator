@@ -18,6 +18,7 @@ export interface Genes {
   metabolism: number; // how fast the belly empties
   stamina: number; // how long it lasts before needing sleep
   playfulness: number; // how fast boredom sets in, how richly play refills
+  diet: number; // which berry color the lineage eats, read in bands
 }
 
 // every gene, checked complete at compile time: adding a field to Genes without
@@ -40,6 +41,7 @@ const GENE_FIELD_SET: Record<keyof Genes, true> = {
   metabolism: true,
   stamina: true,
   playfulness: true,
+  diet: true,
 };
 export const GENE_FIELDS = Object.keys(GENE_FIELD_SET) as readonly (keyof Genes)[];
 
@@ -63,6 +65,7 @@ const DIAL_FIELD_SET: Record<DialField, true> = {
   metabolism: true,
   stamina: true,
   playfulness: true,
+  diet: true,
 };
 export const DIAL_FIELDS = Object.keys(DIAL_FIELD_SET) as readonly DialField[];
 
@@ -85,7 +88,20 @@ export const FOUNDER: Genes = {
   metabolism: 0.5,
   stamina: 0.5,
   playfulness: 0.5,
+  diet: 0.5,
 };
+
+// which berry a diet value means, read in bands with red owning the whole
+// middle: 0.5 IS the classic red-eater, and a lost diet tag decodes to 0.5,
+// so gene damage can never flip a lineage's berries — a flip takes real
+// generational drift past a band edge
+export type BerryKind = 'red' | 'gold' | 'blue';
+export const DIET_BANDS = { gold: 0.3, blue: 0.7 } as const;
+export function dietOf(genes: Genes): BerryKind {
+  if (genes.diet < DIET_BANDS.gold) return 'gold';
+  if (genes.diet > DIET_BANDS.blue) return 'blue';
+  return 'red';
+}
 
 const clampRange = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
@@ -115,6 +131,7 @@ export function sanitizeGenes(g: Genes): Genes {
     metabolism: clamp01(g.metabolism),
     stamina: clamp01(g.stamina),
     playfulness: clamp01(g.playfulness),
+    diet: clamp01(g.diet),
   };
   return clean;
 }

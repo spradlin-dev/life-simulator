@@ -9,7 +9,7 @@ import {
   storeSave,
   type LivePip,
 } from './save.ts';
-import { FOUNDER } from './genes.ts';
+import { dietOf, FOUNDER } from './genes.ts';
 import { DECODER_VERSION, FOUNDER_STRAND } from './dna.ts';
 import { FRESH_NEEDS } from './needs.ts';
 import { FRESH_DISPOSITIONS, freshPlaces, PLACE_CELLS } from './dispositions.ts';
@@ -62,8 +62,14 @@ describe('save round-trip', () => {
       places: freshPlaces(),
       generation: 0,
     });
-    expect(parseSave(serialize([a, b], false))).toEqual({ pips: [a, b], lock: false });
-    expect(parseSave(serialize([a], true))!.lock).toBe(true);
+    expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b] });
+  });
+
+  it('stamps the current version and decoder on every save it writes', () => {
+    const written = JSON.parse(serialize([somePip()]));
+    expect(written.v).toBe(10);
+    expect(written.decoder).toBe(DECODER_VERSION);
+    expect('lock' in written).toBe(false);
   });
 });
 
@@ -84,17 +90,17 @@ describe('two worlds, two slots', () => {
 
   it('a stored meadow is invisible to the terrarium, and vice versa', () => {
     (globalThis as { localStorage?: unknown }).localStorage = fakeStorage;
-    storeSave([somePip()], true, SAVE_KEYS.meadow);
+    storeSave([somePip()], SAVE_KEYS.meadow);
     expect(loadSave(SAVE_KEYS.terrarium)).toBeNull();
     const meadow = loadSave(SAVE_KEYS.meadow);
     expect(meadow!.pips).toHaveLength(1);
-    expect(meadow!.lock).toBe(true);
+    expect(meadow!.pips[0].name).toBe('Tester');
   });
 
   it('clearing one world never touches the other', () => {
     (globalThis as { localStorage?: unknown }).localStorage = fakeStorage;
-    storeSave([somePip()], false, SAVE_KEYS.meadow);
-    storeSave([somePip({ name: 'Labby' })], false, SAVE_KEYS.terrarium);
+    storeSave([somePip()], SAVE_KEYS.meadow);
+    storeSave([somePip({ name: 'Labby' })], SAVE_KEYS.terrarium);
     clearSave(SAVE_KEYS.terrarium);
     expect(loadSave(SAVE_KEYS.terrarium)).toBeNull();
     expect(loadSave(SAVE_KEYS.meadow)!.pips[0].name).toBe('Tester');
@@ -165,12 +171,15 @@ describe('migrations keep the pip', () => {
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
   });
 
-  it('v7 keeps names, salvages mangled ones, and demands complete genomes', () => {
+  it('v7 keeps names, salvages mangled ones, and fills genes it predates', () => {
     const kept = parseSave(JSON.stringify({ v: 7, pips: [v7Pip()] }));
     expect(kept!.pips[0].name).toBe('Tester');
     const mangled = parseSave(JSON.stringify({ v: 7, pips: [{ ...v7Pip(), name: 1234 }] }));
     expect(mangled!.pips[0].name).toMatch(NAME_SHAPE);
-    expect(parseSave(JSON.stringify({ v: 7, pips: [{ ...v7Pip(), genes: OLD_GENES }] }))).toBeNull();
+    // a save can never carry genes added after it was written, so missing
+    // fields fill at the classic midpoint instead of costing the pip its life
+    const sparse = parseSave(JSON.stringify({ v: 7, pips: [{ ...v7Pip(), genes: OLD_GENES }] }));
+    expect(sparse!.pips[0].genes).toEqual({ ...FOUNDER, hue: 159, sat: 53, light: 63 });
   });
 
   it('v6 genomes gain the tempo genes at their midpoints, names intact', () => {
@@ -190,7 +199,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 10, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 11, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -211,7 +220,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 4, pips: Array.from({ length: MAX_SAVED_PIPS }, () => somePip()) }))).not.toBeNull();
     // the writer clamps, so a serialize round-trip survives any population
-    const overgrown = parseSave(serialize(Array.from({ length: MAX_SAVED_PIPS + 3 }, () => somePip()), false));
+    const overgrown = parseSave(serialize(Array.from({ length: MAX_SAVED_PIPS + 3 }, () => somePip())));
     expect(overgrown).not.toBeNull();
     expect(overgrown!.pips).toHaveLength(MAX_SAVED_PIPS);
     // one rotten entry spoils the save — a partial roster would silently lose pips
@@ -342,15 +351,20 @@ describe('the genome rides the save', () => {
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
   });
 
-  it('the feeder lock rides along, and tampering just unlocks', () => {
+  it('the retired feeder lock is ignored wherever an old save carries it', () => {
     const on = parseSave(JSON.stringify({ v: 9, decoder: DECODER, lock: true, pips: [somePip()] }));
-    expect(on!.lock).toBe(true);
-    const off = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip()] }));
-    expect(off!.lock).toBe(false);
-    const tampered = parseSave(JSON.stringify({ v: 9, decoder: DECODER, lock: 'yes', pips: [somePip()] }));
-    expect(tampered!.lock).toBe(false);
-    // an older save simply arrives unlocked
-    const v8 = parseSave(JSON.stringify({ v: 8, decoder: DECODER, lock: true, pips: [somePip()] }));
-    expect(v8!.lock).toBe(false);
+    expect(on).not.toBeNull();
+    expect('lock' in on!).toBe(false);
+    expect(on!.pips).toHaveLength(1);
+  });
+
+  it('a pre-diet save fills the new gene at its midpoint: no pip is lost to a new trait', () => {
+    const { diet: _d, ...oldGenes } = FOUNDER;
+    const entry = { ...somePip(), genes: oldGenes };
+    // decoder 2 is what every real v9 save carries, so the strand respells too
+    const parsed = parseSave(JSON.stringify({ v: 9, decoder: 2, pips: [entry] }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+    expect(dietOf(parsed!.pips[0].genes)).toBe('red');
   });
 });

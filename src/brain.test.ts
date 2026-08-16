@@ -34,6 +34,7 @@ const plain: Genes = {
   metabolism: 0.5,
   stamina: 0.5,
   playfulness: 0.5,
+  diet: 0.5,
 };
 
 function senses(overrides: Partial<Senses> = {}): Senses {

@@ -22,7 +22,7 @@ import {
 // missing tag reads as the classic-pip midpoint. Untagged stretches are junk,
 // where near-tags sleep one mutation away from waking.
 
-export const DECODER_VERSION = 2;
+export const DECODER_VERSION = 3;
 
 const BASES = 'ACGT';
 const TAG_LEN = 3;
@@ -65,6 +65,7 @@ const TAGS: Record<DnaStat, string> = {
   light: 'TGA',
   hueX: 'GCA',
   hueY: 'TAG',
+  diet: 'GTA',
 };
 const STAT_ORDER = Object.keys(TAGS) as readonly DnaStat[];
 const TAG_TO_STAT = new Map<string, DnaStat>(
@@ -204,6 +205,7 @@ export function decode(strand: string): Genes {
     metabolism: stat.metabolism,
     stamina: stat.stamina,
     playfulness: stat.playfulness,
+    diet: stat.diet,
   });
 }
 

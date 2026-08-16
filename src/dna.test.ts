@@ -50,12 +50,12 @@ const arcDist = (a: number, b: number): number => {
 const GRID = 1 / 36;
 const DIAL_TOL = 1.5 * GRID + 1e-9;
 
-// decoder v2, pinned: this exact strand must decode to these exact stats in
+// decoder v3, pinned: this exact strand must decode to these exact stats in
 // every future version, or a re-encode migration is owed. The founder
 // literals are v1's, carried unchanged — canonical strands read each stat
 // once, and a single read does not feel echo weighting
 const GOLDEN_STRAND =
-  'AGGGGGGGGCCCCCCGATTGGGGGGCCCCCCAATGGGGGGCCCCCCGATCGGGGGGCCCCCCCCTGGGGGGCCCCCCGCTTGGGGGGCCCCCCACTGGGGGGCCCCCCCATGGGGGGCCCCCCGCTCGGGGGGCCCCCCGAAGCCCCCCGGGGGGAGCCCCCCGGGGGGTCCGGGGGGCCCCCCGTCTGGGGGGCCCCCCGTATGGGGGGCCCCCCGTTCGCCCCCCCCCCCGTGACCCCGGGGGGGGGCACCAAAAAAAAAAGTAGTGGGGGGGGGGG';
+  'AGGGGGGGGCCCCCCGATTGGGGGGCCCCCCAATGGGGGGCCCCCCGATCGGGGGGCCCCCCCCTGGGGGGCCCCCCGCTTGGGGGGCCCCCCACTGGGGGGCCCCCCCATGGGGGGCCCCCCGCTCGGGGGGCCCCCCGAAGCCCCCCGGGGGGAGCCCCCCGGGGGGTCCGGGGGGCCCCCCGTCTGGGGGGCCCCCCGATATGGGGGGCCCCCCGTTCGCCCCCCCCCCCGTGACCCCGGGGGGGGGCACCAAAAAAAAAAGATAGTGGGGGGGGGGGGTACCCCCCGGGGGG';
 const GOLDEN_GENES: Genes = {
   boldness: 0.5,
   clinginess: 0.5,
@@ -74,11 +74,18 @@ const GOLDEN_GENES: Genes = {
   metabolism: 0.5,
   stamina: 0.5,
   playfulness: 0.5,
+  diet: 0.5,
 };
 
-describe('golden decoder v2', () => {
+// the decoder v2 founder, frozen as a fixture: the copyist mechanics tests
+// script exact rand streams against this length, so they must never move
+// when the living founder gains a gene
+const COPY_STRAND =
+  'AGGGGGGGGCCCCCCGATTGGGGGGCCCCCCAATGGGGGGCCCCCCGATCGGGGGGCCCCCCCCTGGGGGGCCCCCCGCTTGGGGGGCCCCCCACTGGGGGGCCCCCCCATGGGGGGCCCCCCGCTCGGGGGGCCCCCCGAAGCCCCCCGGGGGGAGCCCCCCGGGGGGTCCGGGGGGCCCCCCGTCTGGGGGGCCCCCCGTATGGGGGGCCCCCCGTTCGCCCCCCCCCCCGTGACCCCGGGGGGGGGCACCAAAAAAAAAAGTAGTGGGGGGGGGGG';
+
+describe('golden decoder v3', () => {
   it('pins the founder strand and its decoded stats forever', () => {
-    expect(DECODER_VERSION).toBe(2);
+    expect(DECODER_VERSION).toBe(3);
     expect(FOUNDER_STRAND).toBe(GOLDEN_STRAND);
     expect(decode(FOUNDER_STRAND)).toEqual(GOLDEN_GENES);
   });
@@ -88,10 +95,10 @@ describe('golden decoder v2', () => {
     expect(reads.map((r) => r.stat)).toEqual([
       'boldness', 'clinginess', 'nosiness', 'liveliness', 'metabolism', 'stamina',
       'playfulness', 'size', 'roundness', 'antLength', 'antTip', 'eyeSize',
-      'eyeGap', 'freckles', 'sat', 'light', 'hueX', 'hueY',
+      'eyeGap', 'freckles', 'sat', 'light', 'hueX', 'hueY', 'diet',
     ]);
     expect(reads.map((r) => r.at)).toEqual([
-      0, 16, 31, 47, 62, 78, 93, 108, 124, 139, 154, 169, 185, 201, 217, 233, 248, 264,
+      0, 16, 31, 47, 62, 78, 93, 108, 124, 139, 154, 169, 185, 202, 218, 234, 249, 266, 281,
     ]);
   });
 
@@ -109,14 +116,14 @@ describe('encode round-trip', () => {
     for (let k = 0; k < 300; k++) {
       const genes =
         k === 0
-          ? sanitizeGenes({ ...FOUNDER, boldness: 0, clinginess: 0, nosiness: 0, liveliness: 0, size: 0, roundness: 0, antLength: 0, antTip: 0, eyeSize: 0, eyeGap: 0, freckles: 0, metabolism: 0, stamina: 0, playfulness: 0, hue: 0, sat: 35, light: 48 })
+          ? sanitizeGenes({ ...FOUNDER, boldness: 0, clinginess: 0, nosiness: 0, liveliness: 0, size: 0, roundness: 0, antLength: 0, antTip: 0, eyeSize: 0, eyeGap: 0, freckles: 0, metabolism: 0, stamina: 0, playfulness: 0, diet: 0, hue: 0, sat: 35, light: 48 })
           : k === 1
-            ? sanitizeGenes({ ...FOUNDER, boldness: 1, clinginess: 1, nosiness: 1, liveliness: 1, size: 1, roundness: 1, antLength: 1, antTip: 1, eyeSize: 1, eyeGap: 1, freckles: 1, metabolism: 1, stamina: 1, playfulness: 1, hue: 90, sat: 85, light: 75 })
+            ? sanitizeGenes({ ...FOUNDER, boldness: 1, clinginess: 1, nosiness: 1, liveliness: 1, size: 1, roundness: 1, antLength: 1, antTip: 1, eyeSize: 1, eyeGap: 1, freckles: 1, metabolism: 1, stamina: 1, playfulness: 1, diet: 1, hue: 90, sat: 85, light: 75 })
             : randomGenes(rand);
       const strand = encode(genes);
       const reads = readsOf(strand);
-      expect(reads.length).toBe(18);
-      expect(new Set(reads.map((r) => r.stat)).size).toBe(18);
+      expect(reads.length).toBe(19);
+      expect(new Set(reads.map((r) => r.stat)).size).toBe(19);
       const back = decode(strand);
       for (const f of DIAL_FIELDS) expect(Math.abs(back[f] - genes[f])).toBeLessThanOrEqual(DIAL_TOL);
       expect(Math.abs(back.sat - genes.sat)).toBeLessThanOrEqual(50 * DIAL_TOL);
@@ -172,11 +179,11 @@ describe('decode', () => {
 
   it('junk is inert until a near-tag wakes', () => {
     const dormant = FOUNDER_STRAND + 'CC' + 'AGT' + 'TTTTTTTTTTTT';
-    expect(readsOf(dormant).length).toBe(18);
+    expect(readsOf(dormant).length).toBe(19);
     expect(decode(dormant)).toEqual(GOLDEN_GENES);
 
     const awake = dormant.slice(0, -13) + 'G' + dormant.slice(-12);
-    expect(readsOf(awake).length).toBe(19);
+    expect(readsOf(awake).length).toBe(20);
     const g = decode(awake);
     expect(g.boldness).toBeCloseTo((0.5 + 1 * 0.35) / 1.35, 12);
     expect({ ...g, boldness: 0.5 }).toEqual(GOLDEN_GENES);
@@ -289,32 +296,32 @@ describe('drift', () => {
 describe('copyStrand', () => {
   it('a body at zero comfort copies rigidly: the perfect clone', () => {
     // pre-charge scripted to zero; cold accumulation alone cannot cross
-    expect(copyStrand(FOUNDER_STRAND, [0], rolls({ 0: 0 }, 0.5))).toBe(FOUNDER_STRAND);
+    expect(copyStrand(COPY_STRAND, [0], rolls({ 0: 0 }, 0.5))).toBe(COPY_STRAND);
   });
 
   it('an empty trace reads as mid comfort', () => {
-    const out = copyStrand(FOUNDER_STRAND, [], rolls({ 0: 0 }, 0.5));
-    expect(out.length).toBe(FOUNDER_STRAND.length);
-    const diffs = [...out].filter((c, i) => c !== FOUNDER_STRAND[i]).length;
+    const out = copyStrand(COPY_STRAND, [], rolls({ 0: 0 }, 0.5));
+    expect(out.length).toBe(COPY_STRAND.length);
+    const diffs = [...out].filter((c, i) => c !== COPY_STRAND[i]).length;
     expect(diffs).toBeGreaterThan(0);
     expect(diffs).toBeLessThanOrEqual(3);
   });
 
   it('warmth loosens the copy, and the same seed repeats it exactly', () => {
-    const warm = copyStrand(FOUNDER_STRAND, [1], lcg(11));
-    expect(copyStrand(FOUNDER_STRAND, [1], lcg(11))).toBe(warm);
+    const warm = copyStrand(COPY_STRAND, [1], lcg(11));
+    expect(copyStrand(COPY_STRAND, [1], lcg(11))).toBe(warm);
     const countDiffs = (s: string) =>
-      s.length === FOUNDER_STRAND.length ? [...s].filter((c, i) => c !== FOUNDER_STRAND[i]).length : 99;
-    const cool = copyStrand(FOUNDER_STRAND, [0.1], lcg(11));
+      s.length === COPY_STRAND.length ? [...s].filter((c, i) => c !== COPY_STRAND[i]).length : 99;
+    const cool = copyStrand(COPY_STRAND, [0.1], lcg(11));
     expect(countDiffs(warm)).toBeGreaterThan(countDiffs(cool));
   });
 
   it('slips cluster where comfort peaked: errors have geography', () => {
     // the warm middle third shakes the head ~8x harder than the cold ends
-    const out = copyStrand(FOUNDER_STRAND, [0, 1, 0], lcg(5));
-    const n = Math.min(out.length, FOUNDER_STRAND.length);
+    const out = copyStrand(COPY_STRAND, [0, 1, 0], lcg(5));
+    const n = Math.min(out.length, COPY_STRAND.length);
     const diffs: number[] = [];
-    for (let i = 0; i < n; i++) if (out[i] !== FOUNDER_STRAND[i]) diffs.push(i);
+    for (let i = 0; i < n; i++) if (out[i] !== COPY_STRAND[i]) diffs.push(i);
     expect(diffs.length).toBeGreaterThan(0);
     expect(diffs.some((i) => i >= 93 && i < 186)).toBe(true);
   });
@@ -322,27 +329,27 @@ describe('copyStrand', () => {
   it('a stutter re-copies the run just written, in place', () => {
     // pre-charge zero, warm first fifth, one jitter nudge to dodge a float
     // tie: exactly one slip, at letter 79 in the cold run-out
-    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.985, 82: 0 }, 0.5));
-    expect(out).toBe(FOUNDER_STRAND.slice(0, 80) + FOUNDER_STRAND[79] + FOUNDER_STRAND.slice(80));
+    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.985, 82: 0 }, 0.5));
+    expect(out).toBe(COPY_STRAND.slice(0, 80) + COPY_STRAND[79] + COPY_STRAND.slice(80));
   });
 
   it('a skip leaves letters the head never copied', () => {
-    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.999, 82: 0 }, 0.5));
-    expect(out).toBe(FOUNDER_STRAND.slice(0, 80) + FOUNDER_STRAND.slice(81));
+    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.999, 82: 0 }, 0.5));
+    expect(out).toBe(COPY_STRAND.slice(0, 80) + COPY_STRAND.slice(81));
   });
 
   it('a miscopy changes exactly one letter at the slip', () => {
-    const out = copyStrand(FOUNDER_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.5, 82: 0 }, 0.5));
-    expect(out.length).toBe(FOUNDER_STRAND.length);
-    const diffs = [...out].map((c, i) => (c !== FOUNDER_STRAND[i] ? i : -1)).filter((i) => i >= 0);
+    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.5, 82: 0 }, 0.5));
+    expect(out.length).toBe(COPY_STRAND.length);
+    const diffs = [...out].map((c, i) => (c !== COPY_STRAND[i] ? i : -1)).filter((i) => i >= 0);
     expect(diffs).toEqual([79]);
   });
 
   it('a head born nearly crested slips on the very first letter: no cold zone', () => {
     // charge 0.99 + one mid-comfort step crosses at position 0
-    const out = copyStrand(FOUNDER_STRAND, [0.5], rolls({ 0: 0.99, 1: 0.6, 2: 0.5, 3: 0 }, 0.5));
-    expect(out.length).toBe(FOUNDER_STRAND.length);
-    expect(out[0]).not.toBe(FOUNDER_STRAND[0]);
+    const out = copyStrand(COPY_STRAND, [0.5], rolls({ 0: 0.99, 1: 0.6, 2: 0.5, 3: 0 }, 0.5));
+    expect(out.length).toBe(COPY_STRAND.length);
+    expect(out[0]).not.toBe(COPY_STRAND[0]);
   });
 
   it('a stutter at the fat cap is swallowed, never copied past STRAND_MAX', () => {
@@ -354,15 +361,15 @@ describe('copyStrand', () => {
   });
 
   it('wildness zero stills the head: a perfect clone even from a warm swell', () => {
-    expect(copyStrand(FOUNDER_STRAND, [1], rolls({ 0: 0.99 }, 0.9), 0)).toBe(FOUNDER_STRAND);
+    expect(copyStrand(COPY_STRAND, [1], rolls({ 0: 0.99 }, 0.9), 0)).toBe(COPY_STRAND);
   });
 
   it('the wildness dial scales the tremble: same seed, looser copy', () => {
     const drifted = (wildness: number) => {
-      const out = copyStrand(FOUNDER_STRAND, [1], lcg(7), wildness);
-      const n = Math.min(out.length, FOUNDER_STRAND.length);
-      let diffs = Math.abs(out.length - FOUNDER_STRAND.length);
-      for (let i = 0; i < n; i++) if (out[i] !== FOUNDER_STRAND[i]) diffs++;
+      const out = copyStrand(COPY_STRAND, [1], lcg(7), wildness);
+      const n = Math.min(out.length, COPY_STRAND.length);
+      let diffs = Math.abs(out.length - COPY_STRAND.length);
+      for (let i = 0; i < n; i++) if (out[i] !== COPY_STRAND[i]) diffs++;
       return diffs;
     };
     expect(drifted(2)).toBeGreaterThan(drifted(1));
@@ -388,20 +395,20 @@ describe('annotate', () => {
     return spans;
   };
 
-  it('maps the founder strand: 18 tag landmarks, 18 bodies, junk between', () => {
+  it('maps the founder strand: 19 tag landmarks, 19 bodies, junk between', () => {
     const spans = tiled(FOUNDER_STRAND);
     expect(spans[0]).toEqual({ kind: 'tag', stat: 'boldness', from: 0, to: 3 });
     const tags = spans.filter((s) => s.kind === 'tag');
     expect(tags.map((s) => s.stat)).toEqual([
       'boldness', 'clinginess', 'nosiness', 'liveliness', 'metabolism', 'stamina',
       'playfulness', 'size', 'roundness', 'antLength', 'antTip', 'eyeSize',
-      'eyeGap', 'freckles', 'sat', 'light', 'hueX', 'hueY',
+      'eyeGap', 'freckles', 'sat', 'light', 'hueX', 'hueY', 'diet',
     ]);
     const bodies = spans.filter((s) => s.kind === 'body');
-    expect(bodies.length).toBe(18);
+    expect(bodies.length).toBe(19);
     for (const b of bodies) expect(b.to - b.from).toBe(12);
     const rest = spans.filter((s) => s.kind === 'junk' || s.kind === 'nearTag');
-    expect(rest.reduce((n, s) => n + s.to - s.from, 0)).toBe(FOUNDER_STRAND.length - 18 * 15);
+    expect(rest.reduce((n, s) => n + s.to - s.from, 0)).toBe(FOUNDER_STRAND.length - 19 * 15);
   });
 
   it('junk one substitution from a tag shimmers as a near-tag', () => {
@@ -426,11 +433,13 @@ describe('annotate', () => {
   });
 
   it('a tag inside another body stays visible as a landmark (pleiotropy)', () => {
-    const spans = tiled('AGG' + 'TATAAAAAAAAA' + 'CCCCCCCCCCCC');
+    // host is clinginess: an AGG host would now spell the diet tag GTA
+    // across the junction, which is pleiotropy squared, not this test
+    const spans = tiled('ATT' + 'TATAAAAAAAAA' + 'CCCCCCCCCCCC');
     expect(spans).toEqual([
-      { kind: 'tag', stat: 'boldness', from: 0, to: 3 },
+      { kind: 'tag', stat: 'clinginess', from: 0, to: 3 },
       { kind: 'tag', stat: 'freckles', from: 3, to: 6 },
-      { kind: 'body', stat: 'boldness', from: 6, to: 15 },
+      { kind: 'body', stat: 'clinginess', from: 6, to: 15 },
       { kind: 'body', stat: 'freckles', from: 15, to: 18 },
       { kind: 'junk', stat: null, from: 18, to: 27 },
     ]);

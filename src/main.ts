@@ -1,7 +1,7 @@
 import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
-import { hueShift, type Genes } from './genes.ts';
+import { dietOf, hueShift, type BerryKind, type Genes } from './genes.ts';
 import { annotate, decode, drift, FOUNDER_STRAND, type DnaStat, type StrandSpanKind } from './dna.ts';
 import {
   chooseState,
@@ -77,6 +77,9 @@ interface Treat {
   y: number;
   age: number;
   eater: Pip | null;
+  // ambient berries carry a color only matching diets can eat; a gift from
+  // the watcher tastes like home to everyone
+  kind: BerryKind | 'gift';
 }
 
 const treats: Treat[] = [];
@@ -190,24 +193,33 @@ window.addEventListener('keyup', (e) => {
   if (e.key === 'f' || e.key === 'F') fRainHeld = false;
 });
 
+// gifts cap separately from the meadow's own berries, so hand-feeding can
+// never crowd the ambient growth out of the treat list (or vice versa)
+function giftCount(): number {
+  let n = 0;
+  for (const treat of treats) if (treat.kind === 'gift') n++;
+  return n;
+}
+
 treatButton.addEventListener('click', () => {
   if (suppressArmClick) {
     suppressArmClick = false;
     return;
   }
-  if (treats.length >= TREAT_CAP) return;
+  if (giftCount() >= TREAT_CAP) return;
   treatArmed = !treatArmed;
   document.body.classList.toggle('treat-armed', treatArmed);
 });
 
 function dropTreat(x: number, y: number): void {
-  if (treats.length >= TREAT_CAP) return;
+  if (giftCount() >= TREAT_CAP) return;
   // keep treats where a pip can physically reach them
   treats.push({
     x: Math.min(world.w - 30, Math.max(30, x)),
     y: Math.min(world.h - 30, Math.max(30, y)),
     age: 0,
     eater: null,
+    kind: 'gift',
   });
   treatArmed = false;
   document.body.classList.remove('treat-armed');
@@ -220,33 +232,67 @@ function dropTreatInView(): void {
   dropTreat(camera.x - halfW + Math.random() * halfW * 2, camera.y - halfH + Math.random() * halfH * 2);
 }
 
-// ------------------------------------------------------- the feeder lock
-// past this flock size the lock appears: holding the berry button forever is
-// chore, not care
-const FEED_LOCK_AT = 300;
-// the locked drip IS the soft population cap: each pip needs ~0.31 berries a
-// minute, so one berry every third of a second settles the colony near six
-// hundred — the carrying capacity rises and falls with this one number
-const FEED_EVERY = 1 / 3;
-let feederLocked = false;
-let feedTimer = 0;
-const feederLockButton = document.getElementById('feeder-lock') as HTMLButtonElement;
-shieldFromWorld(feederLockButton);
-feederLockButton.addEventListener('click', () => {
-  feederLocked = !feederLocked;
-  saveWorld();
-});
+// ------------------------------------------------------- the living meadow
+// berries grow on their own, each color at a steady rate. The growth rate IS
+// the soft population cap (about 3.3 pips per berry-per-minute, per color a
+// flock can eat), so diet flips unlock real growth: a red-only meadow
+// settles near 200, each discovered color adds another 200
+const BERRY_KINDS: readonly BerryKind[] = ['red', 'gold', 'blue'];
+const GROW_PER_MIN = 60;
+// standing crop if nobody eats is rate x lifetime (60/min x 60s); the cap
+// only exists so an empty meadow cannot slowly fill with fruit
+const AMBIENT_CAP = 80;
+// the world in coarse cells: berries sprout where berries are missing, so a
+// grazed-out middle refills in the middle, never just at the far edges
+const GRID_COLS = 8;
+const GRID_ROWS = 5;
+const growTimers: Record<BerryKind, number> = { red: 0, gold: 0, blue: 0 };
+
+function cellOf(x: number, y: number): number {
+  const col = Math.min(GRID_COLS - 1, Math.floor((x / world.w) * GRID_COLS));
+  const row = Math.min(GRID_ROWS - 1, Math.floor((y / world.h) * GRID_ROWS));
+  return row * GRID_COLS + col;
+}
+
+function growBerry(kind: BerryKind): void {
+  const counts = new Array<number>(GRID_COLS * GRID_ROWS).fill(0);
+  let total = 0;
+  for (const treat of treats) {
+    if (treat.kind !== kind) continue;
+    counts[cellOf(treat.x, treat.y)]++;
+    total++;
+  }
+  if (total >= AMBIENT_CAP) return;
+  // deficit-weighted, never greedy: the emptiest cells draw most of the
+  // growth, but berries still scatter enough to read as nature
+  const fullest = Math.max(...counts);
+  const weights = counts.map((n) => fullest - n + 1);
+  let pick = Math.random() * weights.reduce((a, b) => a + b, 0);
+  let cell = weights.length - 1;
+  for (let i = 0; i < weights.length; i++) {
+    pick -= weights[i];
+    if (pick <= 0) {
+      cell = i;
+      break;
+    }
+  }
+  const col = cell % GRID_COLS;
+  const row = Math.floor(cell / GRID_COLS);
+  treats.push({
+    x: Math.min(world.w - 30, Math.max(30, ((col + Math.random()) / GRID_COLS) * world.w)),
+    y: Math.min(world.h - 30, Math.max(30, ((row + Math.random()) / GRID_ROWS) * world.h)),
+    age: 0,
+    eater: null,
+    kind,
+  });
+}
 
 function updateTreats(dt: number): void {
   for (let i = treats.length - 1; i >= 0; i--) {
     treats[i].age += dt;
     if (treats[i].age > TREAT_LIFE) treats.splice(i, 1);
   }
-  treatButton.disabled = treats.length >= TREAT_CAP;
-  feederLockButton.hidden = pips.length < FEED_LOCK_AT && !feederLocked;
-  const glyph = feederLocked ? '🔒' : '🔓';
-  if (feederLockButton.textContent !== glyph) feederLockButton.textContent = glyph;
-  feederLockButton.classList.toggle('active', feederLocked);
+  treatButton.disabled = giftCount() >= TREAT_CAP;
 }
 
 // the family portrait rule: frame every pip with breathing room, zoom clamped
@@ -286,9 +332,13 @@ function visibleHalfExtent(): { halfW: number; halfH: number } {
 // a berry someone else is already eating is invisible to the search — crowding
 // one treat starved everyone (each shove reset the other's chewing progress)
 function nearestTreatTo(x: number, y: number, self: Pip | null = null): { treat: Treat; dist: number } | null {
+  const diet = self ? dietOf(self.genes) : null;
   let best: { treat: Treat; dist: number } | null = null;
   for (const treat of treats) {
     if (treat.eater !== null && treat.eater !== self) continue;
+    // a pip only smells its own berry color; the watcher's gifts smell right
+    // to everyone (rescue must never depend on a lineage's diet)
+    if (diet !== null && treat.kind !== 'gift' && treat.kind !== diet) continue;
     const dist = Math.hypot(treat.x - x, treat.y - y);
     if (!best || dist < best.dist) best = { treat, dist };
   }
@@ -457,7 +507,7 @@ function clampToWorld(x: number, y: number, margin = 26): Vec {
 const pips: Pip[] = [];
 
 function saveWorld(): void {
-  storeSave(snapshotWorld(), feederLocked, SAVE_KEY);
+  storeSave(snapshotWorld(), SAVE_KEY);
 }
 
 function snapshotWorld(): LivePip[] {
@@ -496,7 +546,6 @@ const dials = mode === 'terrarium' ? loadDials() : freshDials();
 // the same pips, and how far you got with them, survive the refresh
 const saved = loadSave(SAVE_KEY);
 if (saved) {
-  feederLocked = saved.lock;
   for (const entry of saved.pips) {
     const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
     const pip = makePip(entry.genes, entry.strand, spot.x, spot.y, entry.generation, entry.name);
@@ -875,13 +924,22 @@ function drawTouchGhost(): void {
   ctx.globalAlpha = 1;
 }
 
+// each berry color as drawn; the watcher's gift wears the founder mint, so
+// love is recognizable at a glance in any meadow
+const BERRY_COLORS: Record<BerryKind | 'gift', string> = {
+  red: '#e05c6e',
+  gold: '#e0b04f',
+  blue: '#6f9fe0',
+  gift: '#6fd3b0',
+};
+
 function drawTreats(t: number): void {
   for (const treat of treats) {
     const pop = Math.min(1, treat.age / 0.3);
     const fade = Math.min(1, (TREAT_LIFE - treat.age) / 5);
     const r = 5 * Math.sin(pop * Math.PI * 0.5);
     ctx.globalAlpha = fade;
-    ctx.fillStyle = '#e05c6e';
+    ctx.fillStyle = BERRY_COLORS[treat.kind];
     ctx.beginPath();
     ctx.arc(treat.x, treat.y + Math.sin(t * 3 + treat.x) * 1.2, r, 0, Math.PI * 2);
     ctx.fill();
@@ -1219,7 +1277,8 @@ function rebuildCensus(): void {
 }
 
 // each trait's census color, grouped by function — personality warm, tempo
-// green, looks blue, color pink — so the strand is read by meaning, not letter
+// green, looks blue, color pink, diet ember-red — so the strand is read by
+// meaning, not letter
 const STAT_HUES: Record<DnaStat, number> = {
   boldness: 25,
   clinginess: 45,
@@ -1239,6 +1298,7 @@ const STAT_HUES: Record<DnaStat, number> = {
   light: 315,
   hueX: 330,
   hueY: 345,
+  diet: 8,
 };
 const SPAN_CLASS: Record<StrandSpanKind, string> = {
   tag: 'dna-tag',
@@ -1328,7 +1388,7 @@ const DIAL_LABELS: Record<keyof Dials, string> = {
   wildness: 'wildness',
   appetite: 'appetite',
   weariness: 'weariness',
-  feeder: 'feeder drip',
+  feeder: 'berry growth',
   strangeness: 'strangeness',
 };
 
@@ -1440,7 +1500,6 @@ dialsPanel.append(resetButton);
 function beginAnew(): void {
   clearSave(SAVE_KEY);
   treats.length = 0;
-  feederLocked = false;
   pips.length = 0;
   const first = wanderIn(world.w / 2, world.h / 2);
   showEmote(first, '✧');
@@ -1595,16 +1654,15 @@ function simulate(dt: number, t: number): void {
     rainTimer = 0;
   }
 
-  if (feederLocked) {
-    feedTimer -= dt;
-    while (feedTimer <= 0) {
-      // the feeder dial retunes the drip, and with it the size the locked
-      // colony settles at (about 3.3 pips per berry-per-minute)
-      feedTimer += FEED_EVERY / dials.feeder;
-      dropTreatInView();
+  // the meadow feeds itself: each berry color grows at its own steady drip,
+  // and the growth dial retunes the whole food economy (with it, the size
+  // every flock settles at)
+  for (const kind of BERRY_KINDS) {
+    growTimers[kind] -= dt;
+    while (growTimers[kind] <= 0) {
+      growTimers[kind] += 60 / (GROW_PER_MIN * dials.feeder);
+      growBerry(kind);
     }
-  } else {
-    feedTimer = 0;
   }
 
   sinceSave += dt;
