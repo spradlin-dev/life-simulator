@@ -25,6 +25,7 @@ export interface Senses {
   stillFor: number;
   treatDist: number; // Infinity when no treat is down
   place: number; // memory of the ground it stands on: -1 dreaded … +1 beloved
+  alarm: number; // 0..1 panic radiating from nearby fleeing pips — fear is contagious
 }
 
 export interface Decision {
@@ -67,12 +68,13 @@ function menace(senses: Senses): number {
 }
 
 export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: number): Moods {
-  const { presence, dist, speed, stillFor, place } = senses;
+  const { presence, dist, speed, stillFor, place, alarm } = senses;
   const threat = menace(senses) * lerp(1.3, 0.7, genes.boldness);
   const dreadHere = Math.max(0, -place);
   const comfortHere = Math.max(0, place);
 
-  let fear = clamp01(moods.fear + threat * dt * 5);
+  const felt = alarm * lerp(1.3, 0.7, genes.boldness);
+  let fear = clamp01(moods.fear + threat * dt * 5 + felt * dt * 1.2);
   // beloved ground soothes: fear drains faster on it
   fear = clamp01(fear - dt * (0.1 + 0.15 * moods.trust + comfortHere * 0.1));
   // dreaded ground drags fear up toward a floor — deep memories push past the

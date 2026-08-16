@@ -23,7 +23,7 @@ import {
   type Dispositions,
 } from './dispositions.ts';
 import { createInput } from './input.ts';
-import { loadSave, storeSave } from './save.ts';
+import { clearSave, loadSave, storeSave, type LivePip } from './save.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -108,7 +108,7 @@ treatButton.addEventListener('click', () => {
 
 function dropTreat(x: number, y: number): void {
   if (treats.length >= TREAT_CAP) return;
-  // keep treats where the pip can physically reach them
+  // keep treats where a pip can physically reach them
   treats.push({
     x: Math.min(view.w - 30, Math.max(30, x)),
     y: Math.min(view.h - 30, Math.max(30, y)),
@@ -126,16 +126,16 @@ function updateTreats(dt: number): void {
   treatButton.disabled = treats.length >= TREAT_CAP;
 }
 
-function nearestTreat(): { treat: Treat; dist: number } | null {
+function nearestTreatTo(x: number, y: number): { treat: Treat; dist: number } | null {
   let best: { treat: Treat; dist: number } | null = null;
   for (const treat of treats) {
-    const dist = Math.hypot(treat.x - pip.x, treat.y - pip.y);
+    const dist = Math.hypot(treat.x - x, treat.y - y);
     if (!best || dist < best.dist) best = { treat, dist };
   }
   return best;
 }
 
-// ------------------------------------------------------------------ the critter
+// ------------------------------------------------------------------ the pips
 
 interface Vec {
   x: number;
@@ -152,102 +152,159 @@ const QUIRK_SECONDS: Record<Quirk, number> = {
   sniff: 0.8,
 };
 
-const pip = {
-  x: view.w / 2,
-  y: view.h / 2,
-  vx: 0,
-  vy: 0,
-  facing: 1,
-  state: 'wander' as CritterState,
-  stateTime: 0,
-  genes: FOUNDER,
-  moods: { fear: 0, curiosity: 0, trust: 0.5 } as Moods,
-  needs: { ...FRESH_NEEDS } as Needs,
-  disp: { ...FRESH_DISPOSITIONS } as Dispositions,
-  places: freshPlaces(),
-  wanderTarget: null as Vec | null,
-  pauseFor: 0,
-  blinkIn: 2,
-  emote: '',
-  emoteFor: 0,
-  quirk: null as Quirk | null,
-  quirkFor: 0,
-  munchFor: 0,
-  munchTarget: null as Treat | null,
-  antenna: { x: view.w / 2, y: view.h / 2 - 42, vx: 0, vy: 0 },
-};
+interface Pip {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: number;
+  state: CritterState;
+  stateTime: number;
+  genes: Genes;
+  moods: Moods;
+  needs: Needs;
+  disp: Dispositions;
+  places: number[];
+  wanderTarget: Vec | null;
+  pauseFor: number;
+  blinkIn: number;
+  emote: string;
+  emoteFor: number;
+  quirk: Quirk | null;
+  quirkFor: number;
+  munchFor: number;
+  munchTarget: Treat | null;
+  antenna: { x: number; y: number; vx: number; vy: number };
+}
 
-function snapshotPip() {
+function makePip(genes: Genes, x: number, y: number): Pip {
   return {
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    facing: 1,
+    state: 'wander',
+    stateTime: 0,
+    genes,
+    moods: { fear: 0, curiosity: 0, trust: 0.5 },
+    needs: { ...FRESH_NEEDS },
+    disp: { ...FRESH_DISPOSITIONS },
+    places: freshPlaces(),
+    wanderTarget: null,
+    pauseFor: 0,
+    blinkIn: 1.5 + Math.random() * 3,
+    emote: '',
+    emoteFor: 0,
+    quirk: null,
+    quirkFor: 0,
+    munchFor: 0,
+    munchTarget: null,
+    antenna: { x, y: y - 42, vx: 0, vy: 0 },
+  };
+}
+
+function randomSpot(): Vec {
+  return {
+    x: 80 + Math.random() * Math.max(0, view.w - 160),
+    y: 80 + Math.random() * Math.max(0, view.h - 160),
+  };
+}
+
+const pips: Pip[] = [];
+let selected = 0;
+
+function snapshotWorld(): LivePip[] {
+  return pips.map((pip) => ({
     genes: pip.genes,
     trust: pip.moods.trust,
     needs: pip.needs,
     pos: { x: pip.x, y: pip.y },
     disp: pip.disp,
     places: pip.places,
-  };
+  }));
 }
 
-// the same pip, and how far you got with it, survives the refresh
+const params = new URLSearchParams(location.search);
+// dev knob: ?reset abandons the saved world (the installed app shares this
+// origin's storage, so a browser-tab reset wipes the PWA's world too)
+if (params.has('reset')) clearSave();
+
+// the same pips, and how far you got with them, survive the refresh
 const saved = loadSave();
 if (saved) {
-  pip.genes = saved.genes;
-  pip.moods.trust = saved.trust;
-  pip.needs = saved.needs;
-  pip.disp = saved.disp;
-  pip.places = saved.places;
-  if (saved.pos) {
-    pip.x = Math.min(view.w - 26, Math.max(26, saved.pos.x));
-    pip.y = Math.min(view.h - 26, Math.max(26, saved.pos.y));
-    pip.antenna.x = pip.x;
-    pip.antenna.y = pip.y - 42;
+  for (const entry of saved.pips) {
+    const spot = entry.pos
+      ? {
+          x: Math.min(view.w - 26, Math.max(26, entry.pos.x)),
+          y: Math.min(view.h - 26, Math.max(26, entry.pos.y)),
+        }
+      : randomSpot();
+    const pip = makePip(entry.genes, spot.x, spot.y);
+    pip.moods.trust = entry.trust;
+    pip.needs = entry.needs;
+    pip.disp = entry.disp;
+    pip.places = entry.places;
+    pips.push(pip);
   }
 } else {
-  pip.genes = descend(FOUNDER, 6);
-  storeSave(snapshotPip());
+  pips.push(makePip(descend(FOUNDER, 6), view.w / 2, view.h / 2));
+  storeSave(snapshotWorld());
+}
+
+// dev knob until mitosis: ?flock=N tops the roster up with fresh descendants
+const flockWanted = Number(params.get('flock'));
+if (Number.isFinite(flockWanted) && flockWanted >= 2) {
+  const cap = Math.min(12, Math.floor(flockWanted));
+  while (pips.length < cap) {
+    const spot = randomSpot();
+    pips.push(makePip(descend(FOUNDER, 6), spot.x, spot.y));
+  }
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') storeSave(snapshotPip());
+  if (document.visibilityState === 'hidden') storeSave(snapshotWorld());
 });
-window.addEventListener('pagehide', () => storeSave(snapshotPip()));
+window.addEventListener('pagehide', () => storeSave(snapshotWorld()));
 
-let happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
-
-// 0 content … 1 utterly miserable; drives the visible sulk
-function sulk(): number {
-  return happiness < 0.35 ? 1 - happiness / 0.35 : 0;
-}
-
-function distToPointer(): number {
+function distToPointerOf(pip: Pip): number {
   return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
 }
 
-function currentSenses(): Senses {
-  const treat = nearestTreat();
+// panic radiates: the fear of nearby fleeing pips, discounted by distance
+function alarmNear(self: Pip): number {
+  let worst = 0;
+  for (const other of pips) {
+    if (other === self) continue;
+    if (other.state !== 'flee' && other.state !== 'cower') continue;
+    const d = Math.hypot(other.x - self.x, other.y - self.y);
+    worst = Math.max(worst, other.moods.fear * Math.max(0, 1 - d / 240));
+  }
+  return worst;
+}
+
+function sensesFor(pip: Pip): Senses {
+  const treat = nearestTreatTo(pip.x, pip.y);
   return {
     presence: pointer.presence,
-    dist: distToPointer(),
+    dist: distToPointerOf(pip),
     speed: pointer.speed,
     stillFor: pointer.stillFor,
     treatDist: treat ? treat.dist : Infinity,
     place: placeAt(pip.places, pip.x / view.w, pip.y / view.h),
+    alarm: alarmNear(pip),
   };
 }
 
-function space(expressed: Genes): number {
-  return personalSpace(pip.moods.trust, expressed);
-}
-
-function showEmote(symbol: string): void {
+function showEmote(pip: Pip, symbol: string): void {
   pip.emote = symbol;
   pip.emoteFor = 1.2;
 }
 
 // ------------------------------------------------------------------ movement
 
-function steerToward(tx: number, ty: number, accel: number, maxSpeed: number, dt: number): void {
-  const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulk());
+function steerToward(pip: Pip, tx: number, ty: number, accel: number, maxSpeed: number, dt: number, sulkFactor: number): void {
+  const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulkFactor);
   const a = accel * zip;
   const cap = maxSpeed * zip;
   const dx = tx - pip.x;
@@ -264,20 +321,21 @@ function steerToward(tx: number, ty: number, accel: number, maxSpeed: number, dt
   }
 }
 
-function settle(dt: number, rate: number): void {
+function settle(pip: Pip, dt: number, rate: number): void {
   const k = Math.max(0, 1 - rate * dt);
   pip.vx *= k;
   pip.vy *= k;
 }
 
-function act(dt: number, t: number, expressed: Genes): void {
-  const dist = distToPointer();
+function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: number): void {
+  const dist = distToPointerOf(pip);
+  const space = personalSpace(pip.moods.trust, expressed);
 
   switch (pip.state) {
     case 'wander': {
       if (pip.pauseFor > 0) {
         pip.pauseFor -= dt;
-        settle(dt, 4);
+        settle(pip, dt, 4);
         break;
       }
       let wt = pip.wanderTarget;
@@ -301,47 +359,48 @@ function act(dt: number, t: number, expressed: Genes): void {
         pip.wanderTarget = wt;
         if (Math.random() < 0.4) pip.pauseFor = 1 + Math.random() * 2.5;
       }
-      steerToward(wt.x, wt.y, 300, 60, dt);
+      steerToward(pip, wt.x, wt.y, 300, 60, dt, sulkFactor);
       break;
     }
     case 'curious': {
       // creeps closer in fits and starts, stopping at a respectful distance
       const stepping = Math.sin(pip.stateTime * 2.4) > -0.2;
-      if (dist > space(expressed) && stepping) steerToward(pointer.x, pointer.y, 260, 75, dt);
-      else settle(dt, 5);
-      if (pip.stateTime < 0.05) showEmote('?');
+      if (dist > space && stepping) steerToward(pip, pointer.x, pointer.y, 260, 75, dt, sulkFactor);
+      else settle(pip, dt, 5);
+      if (pip.stateTime < 0.05) showEmote(pip, '?');
       break;
     }
     case 'follow': {
-      if (dist > space(expressed) + 26) steerToward(pointer.x, pointer.y, 500, 210, dt);
-      else settle(dt, 4);
+      if (dist > space + 26) steerToward(pip, pointer.x, pointer.y, 500, 210, dt, sulkFactor);
+      else settle(pip, dt, 4);
       break;
     }
     case 'flee': {
       const away = Math.atan2(pip.y - pointer.y, pip.x - pointer.x);
       const wobble = Math.sin(t * 9) * 0.5;
       steerToward(
+        pip,
         pip.x + Math.cos(away + wobble) * 100,
         pip.y + Math.sin(away + wobble) * 100,
-        900, 330, dt);
+        900, 330, dt, sulkFactor);
       break;
     }
     case 'cower':
-      settle(dt, 10);
+      settle(pip, dt, 10);
       break;
     case 'snuggle': {
-      if (dist > space(expressed) * 0.8) steerToward(pointer.x, pointer.y, 120, 40, dt);
-      else settle(dt, 3);
-      if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote('♥');
+      if (dist > space * 0.8) steerToward(pip, pointer.x, pointer.y, 120, 40, dt, sulkFactor);
+      else settle(pip, dt, 3);
+      if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote(pip, '♥');
       // shared warmth suffuses the spot itself
       pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, dt * 0.012);
       break;
     }
     case 'snack': {
-      const target = nearestTreat();
+      const target = nearestTreatTo(pip.x, pip.y);
       if (!target) {
         pip.munchTarget = null;
-        settle(dt, 4);
+        settle(pip, dt, 4);
         break;
       }
       if (target.treat !== pip.munchTarget) {
@@ -350,9 +409,9 @@ function act(dt: number, t: number, expressed: Genes): void {
       }
       if (target.dist > 18) {
         pip.munchFor = 0;
-        steerToward(target.treat.x, target.treat.y, 320, 130, dt);
+        steerToward(pip, target.treat.x, target.treat.y, 320, 130, dt, sulkFactor);
       } else {
-        settle(dt, 8);
+        settle(pip, dt, 8);
         pip.munchFor += dt;
         if (pip.munchFor >= 1.2) {
           // a good meal warms the memory of where it happened
@@ -362,18 +421,31 @@ function act(dt: number, t: number, expressed: Genes): void {
           pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
           pip.munchFor = 0;
           pip.munchTarget = null;
-          showEmote('♥');
+          showEmote(pip, '♥');
         }
       }
       break;
     }
     case 'sleep':
-      settle(dt, 3);
-      if (pip.emoteFor <= 0 && Math.random() < dt / 3) showEmote('z');
+      settle(pip, dt, 3);
+      if (pip.emoteFor <= 0 && Math.random() < dt / 3) showEmote(pip, 'z');
       break;
     default: {
       const unhandled: never = pip.state;
       throw new Error(`unhandled state: ${String(unhandled)}`);
+    }
+  }
+
+  // pips are solid-ish: overlapping neighbors push each other apart
+  for (const other of pips) {
+    if (other === pip) continue;
+    const dx = pip.x - other.x;
+    const dy = pip.y - other.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0 && d < 44) {
+      const push = ((44 - d) / 44) * 220 * dt;
+      pip.vx += (dx / d) * push;
+      pip.vy += (dy / d) * push;
     }
   }
 
@@ -392,9 +464,9 @@ function act(dt: number, t: number, expressed: Genes): void {
   if (Math.abs(pip.vx) > 5) pip.facing = Math.sign(pip.vx);
 }
 
-function updateAntenna(dt: number): void {
+function updateAntenna(pip: Pip, dt: number, sulkFactor: number): void {
   const a = pip.antenna;
-  const droop = sulk() * 14;
+  const droop = sulkFactor * 14;
   a.vx += (pip.x - pip.facing * 4 - a.x) * 60 * dt;
   a.vy += (pip.y - 42 + droop - a.y) * 60 * dt;
   a.vx *= Math.max(0, 1 - 6 * dt);
@@ -403,12 +475,12 @@ function updateAntenna(dt: number): void {
   a.y += a.vy * dt;
 }
 
-function inIdleState(): boolean {
+function inIdleState(pip: Pip): boolean {
   return pip.state === 'wander' || pip.state === 'curious' || pip.state === 'snuggle';
 }
 
-function maybeStartQuirk(dt: number): void {
-  if (!inIdleState() || Math.hypot(pip.vx, pip.vy) >= 30) return;
+function maybeStartQuirk(pip: Pip, dt: number): void {
+  if (!inIdleState(pip) || Math.hypot(pip.vx, pip.vy) >= 30) return;
   if (Math.random() > dt / lerp(9, 4, pip.genes.liveliness)) return;
   const options: Quirk[] = ['stretch', 'lookAround', 'sniff'];
   if (pip.moods.fear < 0.1) options.push('yawn');
@@ -417,24 +489,28 @@ function maybeStartQuirk(dt: number): void {
   pip.quirkFor = QUIRK_SECONDS[pip.quirk];
 }
 
-function updateTimers(dt: number): void {
+function sulkOf(happiness: number): number {
+  return happiness < 0.35 ? 1 - happiness / 0.35 : 0;
+}
+
+function updateTimers(pip: Pip, dt: number, sulkFactor: number): void {
   pip.emoteFor = Math.max(0, pip.emoteFor - dt);
   pip.blinkIn -= dt;
   if (pip.blinkIn < -0.12) pip.blinkIn = 1.5 + Math.random() * 4;
   if (pip.quirk) {
-    if (!inIdleState()) {
+    if (!inIdleState(pip)) {
       pip.quirk = null; // a scare or sleep interrupts whatever it was doing
     } else {
       pip.quirkFor -= dt;
       if (pip.quirkFor <= 0) pip.quirk = null;
     }
   } else {
-    maybeStartQuirk(dt);
+    maybeStartQuirk(pip, dt);
   }
   // a hungry pip thinks about berries; a miserable one trails off
   if (pip.emoteFor <= 0 && pip.state !== 'sleep') {
-    if (pip.needs.food < 0.3 && Math.random() < dt / 6) showEmote('●');
-    else if (sulk() > 0.5 && Math.random() < dt / 8) showEmote('…');
+    if (pip.needs.food < 0.3 && Math.random() < dt / 6) showEmote(pip, '●');
+    else if (sulkFactor > 0.5 && Math.random() < dt / 8) showEmote(pip, '…');
   }
 }
 
@@ -482,12 +558,12 @@ function drawTreats(t: number): void {
 
 // genetic base color with relative mood tinting: fear cools and washes out,
 // snuggling warms, misery grays everything down
-function bodyColor(): string {
+function bodyColorOf(pip: Pip, sulkFactor: number): string {
   const g = pip.genes;
   const fear = pip.moods.fear;
   let h = hueShift(g.hue, 250, fear * 0.4);
-  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulk());
-  const l = g.light + fear * 5 - sulk() * 4;
+  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulkFactor);
+  const l = g.light + fear * 5 - sulkFactor * 4;
   if (pip.state === 'snuggle') {
     h = hueShift(h, 30, 0.35);
     s = Math.min(90, s + 12);
@@ -497,12 +573,7 @@ function bodyColor(): string {
 
 const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e' };
 
-function draw(t: number): void {
-  ctx.clearRect(0, 0, view.w, view.h);
-
-  drawTouchGhost();
-  drawTreats(t);
-
+function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): void {
   const speed = Math.hypot(pip.vx, pip.vy);
   const asleep = pip.state === 'sleep';
   const trembling = pip.state === 'cower' ? 1 : pip.moods.fear > 0.5 ? 0.4 : 0;
@@ -555,7 +626,16 @@ function draw(t: number): void {
   const sx = (1 + stretch) * (1 - stretchPose * 0.35);
   const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose);
   const squish = pip.state === 'cower' ? 0.78 : 1;
-  const color = bodyColor();
+  const color = bodyColorOf(pip, sulkFactor);
+
+  // the watcher's quiet mark on whoever they are watching — pips can't sense it
+  if (isSelected) {
+    ctx.strokeStyle = 'rgba(223, 232, 240, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(pip.x, pip.y + 4, R * 1.7, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   // shadow
   ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
@@ -604,7 +684,7 @@ function draw(t: number): void {
     lookY = Math.sin(a) * 2.8;
   }
   if (pip.state === 'snack') {
-    const target = nearestTreat();
+    const target = nearestTreatTo(pip.x, pip.y);
     if (target) {
       const a = Math.atan2(target.treat.y - y, target.treat.x - x);
       lookX = Math.cos(a) * 2.8;
@@ -657,6 +737,44 @@ function draw(t: number): void {
   }
 }
 
+// ------------------------------------------------------------------ selection
+
+const roster = document.getElementById('roster') as HTMLDivElement;
+shieldFromWorld(roster);
+let rosterBuiltFor = -1;
+
+function rebuildRoster(): void {
+  roster.replaceChildren();
+  pips.forEach((pip, i) => {
+    const dot = document.createElement('button');
+    dot.className = 'dot';
+    dot.style.background = `hsl(${pip.genes.hue}, ${pip.genes.sat}%, ${pip.genes.light}%)`;
+    dot.setAttribute('aria-label', `pip ${i + 1}`);
+    dot.addEventListener('click', () => {
+      selected = i;
+    });
+    roster.append(dot);
+  });
+  rosterBuiltFor = pips.length;
+}
+
+function updateRoster(): void {
+  if (rosterBuiltFor !== pips.length) rebuildRoster();
+  roster.hidden = pips.length < 2;
+  for (const [i, dot] of [...roster.children].entries()) {
+    dot.classList.toggle('selected', i === selected);
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  // Tab keeps its focus-traversal job while the toast is up or there is no flock
+  if (e.key === 'Tab' && (!toast.hidden || pips.length < 2)) return;
+  e.preventDefault();
+  const step = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
+  selected = (selected + step + pips.length) % pips.length;
+});
+
 // ------------------------------------------------------------------ hud & loop
 
 const MOOD_LABELS: Record<CritterState, string> = {
@@ -699,8 +817,15 @@ function meter(v: number): string {
 }
 
 function updateHud(): void {
+  const pip = pips[selected];
+  if (!pip) {
+    hud.textContent = '';
+    return;
+  }
+  const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
+  const who = pips.length > 1 ? `pip ${selected + 1}/${pips.length}` : 'pip';
   hud.textContent =
-    `pip: ${MOOD_LABELS[pip.state]}\n` +
+    `${who}: ${MOOD_LABELS[pip.state]}\n` +
     `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp)}\n` +
     `mood      ${meter(happiness)}\n` +
     `trust     ${meter(pip.moods.trust)}\n` +
@@ -726,52 +851,70 @@ function frame(now: number): void {
   sinceSave += dt;
   if (sinceSave >= 10) {
     sinceSave = 0;
-    storeSave(snapshotPip());
+    storeSave(snapshotWorld());
   }
 
-  const fearAtFrameStart = pip.moods.fear;
-  const expressed = effectiveGenes(pip.genes, pip.disp);
-
-  for (const k of input.takeKnocks()) {
+  const knocks = input.takeKnocks();
+  // captured before knocks land, so a click-spike still reads as a fear
+  // crossing and scars the place where it happened
+  const fearAtFrameStart = pips.map((pip) => pip.moods.fear);
+  for (const k of knocks) {
     if (treatArmed) {
       dropTreat(k.x, k.y);
       break; // discard this frame's remaining knocks — feeding intent shouldn't startle
     }
-    const before = pip.moods.fear;
-    pip.moods = knock(pip.moods, expressed, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
-    if (pip.moods.fear > before) showEmote('!');
+    for (const pip of pips) {
+      const before = pip.moods.fear;
+      const expressed = effectiveGenes(pip.genes, pip.disp);
+      pip.moods = knock(pip.moods, expressed, Math.hypot(k.x - pip.x, k.y - pip.y), k.strength);
+      if (pip.moods.fear > before) showEmote(pip, '!');
+    }
   }
 
-  const senses = currentSenses();
-  const beforeFear = pip.moods.fear;
-  pip.moods = updateMoods(pip.moods, expressed, senses, dt);
-  if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote('!');
+  for (const [i, pip] of pips.entries()) {
+    const expressed = effectiveGenes(pip.genes, pip.disp);
+    const senses = sensesFor(pip);
 
-  const decision = chooseState(pip.state, pip.moods, pip.needs, expressed, senses);
-  pip.moods = decision.moods;
-  if (decision.startled) showEmote('!');
-  if (decision.state !== pip.state) {
-    pip.state = decision.state;
-    pip.stateTime = 0;
-    pip.munchFor = 0;
-    pip.munchTarget = null;
+    const beforeFear = pip.moods.fear;
+    pip.moods = updateMoods(pip.moods, expressed, senses, dt);
+    if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote(pip, '!');
+
+    const decision = chooseState(pip.state, pip.moods, pip.needs, expressed, senses);
+    pip.moods = decision.moods;
+    if (decision.startled) showEmote(pip, '!');
+    if (decision.state !== pip.state) {
+      pip.state = decision.state;
+      pip.stateTime = 0;
+      pip.munchFor = 0;
+      pip.munchTarget = null;
+    }
+    pip.stateTime += dt;
+
+    pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt);
+    const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
+    const sulkFactor = sulkOf(happiness);
+
+    // terror leaves marks: on the self, and on the place where it happened
+    pip.disp = learn(pip.disp, pip.moods.fear, happiness, dt);
+    pip.places = fadePlaces(pip.places, dt);
+    if (pip.moods.fear > 0.6 && fearAtFrameStart[i] <= 0.6) {
+      pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, -0.34);
+    }
+
+    act(pip, dt, t, expressed, sulkFactor);
+    updateAntenna(pip, dt, sulkFactor);
+    updateTimers(pip, dt, sulkFactor);
   }
-  pip.stateTime += dt;
 
-  pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt);
-  happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
-
-  // terror leaves marks: on the self, and on the place where it happened
-  pip.disp = learn(pip.disp, pip.moods.fear, happiness, dt);
-  pip.places = fadePlaces(pip.places, dt);
-  if (pip.moods.fear > 0.6 && fearAtFrameStart <= 0.6) {
-    pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, -0.34);
+  ctx.clearRect(0, 0, view.w, view.h);
+  drawTouchGhost();
+  drawTreats(t);
+  for (const [i, pip] of pips.entries()) {
+    const sulkFactor = sulkOf(happinessOf(pip.needs, pip.moods.trust, pip.moods.fear));
+    drawPip(pip, t, i === selected && pips.length > 1, sulkFactor);
   }
 
-  act(dt, t, expressed);
-  updateAntenna(dt);
-  updateTimers(dt);
-  draw(t);
+  updateRoster();
   updateHud();
 
   if (pointer.presence > 0.9 && playedFor < 9) {

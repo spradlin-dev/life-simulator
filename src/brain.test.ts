@@ -34,6 +34,7 @@ function senses(overrides: Partial<Senses> = {}): Senses {
     stillFor: 0,
     treatDist: Infinity,
     place: 0,
+    alarm: 0,
     ...overrides,
   };
 }
@@ -107,6 +108,19 @@ describe('moods', () => {
     const home = runMoods(shaken, senses({ presence: 0, place: 0.9 }), 2);
     const nowhere = runMoods(shaken, senses({ presence: 0 }), 2);
     expect(home.fear).toBeLessThan(nowhere.fear);
+  });
+
+  it('panic is contagious: a fleeing neighbor spreads fear', () => {
+    const nearPanic = runMoods(calm, senses({ presence: 0, alarm: 0.6 }), 2);
+    const alone = runMoods(calm, senses({ presence: 0 }), 2);
+    expect(nearPanic.fear).toBeGreaterThan(alone.fear);
+  });
+
+  it('the bold catch panic more slowly than the timid', () => {
+    const panicky = senses({ presence: 0, alarm: 0.6 });
+    const bold = runMoods(calm, panicky, 2, 0.1, { ...plain, boldness: 1 });
+    const timid = runMoods(calm, panicky, 2, 0.1, { ...plain, boldness: 0 });
+    expect(bold.fear).toBeLessThan(timid.fear);
   });
 
   it('a once-scarred pip startles at what a fresh pip shrugs off', () => {

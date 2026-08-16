@@ -114,3 +114,37 @@ body.treat-armed #treat-button {
 body.treat-armed #world {
   cursor: copy;
 }
+
+#roster {
+  position: fixed;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: min(80vw, 640px);
+  gap: 8px;
+}
+
+#roster:empty {
+  display: none;
+}
+
+#roster[hidden] {
+  display: none;
+}
+
+#roster .dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+#roster .dot.selected {
+  border-color: #dfe8f0;
+  box-shadow: 0 0 6px rgba(223, 232, 240, 0.4);
+}

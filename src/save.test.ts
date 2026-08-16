@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSave, serialize } from './save.ts';
+import { MAX_SAVED_PIPS, parseSave, serialize, type LivePip } from './save.ts';
 import { FOUNDER } from './genes.ts';
 import { FRESH_NEEDS } from './needs.ts';
 import { FRESH_DISPOSITIONS, freshPlaces, PLACE_CELLS } from './dispositions.ts';
@@ -14,50 +14,67 @@ const somePlaces = (): number[] => {
   return s;
 };
 
+function somePip(overrides: Partial<LivePip> = {}): LivePip {
+  return {
+    genes: FOUNDER,
+    trust: 0.73,
+    needs: someNeeds,
+    pos: somePos,
+    disp: someDisp,
+    places: somePlaces(),
+    ...overrides,
+  };
+}
+
 describe('save round-trip', () => {
-  it('returns exactly what was stored', () => {
-    const places = somePlaces();
-    const json = serialize({
-      genes: FOUNDER,
-      trust: 0.73,
-      needs: someNeeds,
-      pos: somePos,
-      disp: someDisp,
-      places,
+  it('returns exactly the roster that was stored', () => {
+    const a = somePip();
+    const b = somePip({
+      genes: { ...FOUNDER, hue: 280 },
+      trust: 0.2,
+      pos: { x: 900, y: 40 },
+      places: freshPlaces(),
     });
-    expect(parseSave(json)).toEqual({
-      genes: FOUNDER,
-      trust: 0.73,
-      needs: someNeeds,
-      pos: somePos,
-      disp: someDisp,
-      places,
-    });
+    expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b] });
   });
 });
 
 describe('migrations keep the pip', () => {
-  it('v1 fills fresh needs, unknown position, and a clean slate of memories', () => {
+  it('v1 becomes a population of one with fresh needs, unknown position, and a clean slate', () => {
     const v1 = JSON.stringify({ v: 1, genes: FOUNDER, trust: 0.73 });
     expect(parseSave(v1)).toEqual({
-      genes: FOUNDER,
-      trust: 0.73,
-      needs: FRESH_NEEDS,
-      pos: null,
-      disp: FRESH_DISPOSITIONS,
-      places: freshPlaces(),
+      pips: [{
+        genes: FOUNDER,
+        trust: 0.73,
+        needs: FRESH_NEEDS,
+        pos: null,
+        disp: FRESH_DISPOSITIONS,
+        places: freshPlaces(),
+      }],
     });
   });
 
   it('v2 keeps needs and position, gains a clean slate of memories', () => {
     const v2 = JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos });
     expect(parseSave(v2)).toEqual({
-      genes: FOUNDER,
-      trust: 0.73,
-      needs: someNeeds,
-      pos: somePos,
-      disp: FRESH_DISPOSITIONS,
-      places: freshPlaces(),
+      pips: [{
+        genes: FOUNDER,
+        trust: 0.73,
+        needs: someNeeds,
+        pos: somePos,
+        disp: FRESH_DISPOSITIONS,
+        places: freshPlaces(),
+      }],
+    });
+  });
+
+  it('v3 keeps everything it had', () => {
+    const places = somePlaces();
+    const v3 = JSON.stringify({
+      v: 3, genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places,
+    });
+    expect(parseSave(v3)).toEqual({
+      pips: [{ genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places }],
     });
   });
 });
@@ -67,7 +84,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 4, genes: FOUNDER, trust: 0.5, needs: someNeeds, pos: somePos, disp: someDisp, places: freshPlaces() }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 5, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -78,6 +95,22 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 1, trust: 0.5 }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 1, genes: { ...FOUNDER, boldness: 'high' }, trust: 0.5 }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 1, genes: FOUNDER, trust: 'lots' }))).toBeNull();
+  });
+
+  it('roster problems: missing, empty, oversized, or one bad entry', () => {
+    expect(parseSave(JSON.stringify({ v: 4 }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toBeNull();
+    const horde = Array.from({ length: MAX_SAVED_PIPS + 1 }, () => somePip());
+    expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 4, pips: Array.from({ length: MAX_SAVED_PIPS }, () => somePip()) }))).not.toBeNull();
+    // the writer clamps, so a serialize round-trip survives any population
+    const overgrown = parseSave(serialize(Array.from({ length: MAX_SAVED_PIPS + 3 }, () => somePip())));
+    expect(overgrown).not.toBeNull();
+    expect(overgrown!.pips).toHaveLength(MAX_SAVED_PIPS);
+    // one rotten entry spoils the save — a partial roster would silently lose pips
+    expect(parseSave(JSON.stringify({ v: 4, pips: [somePip(), { genes: FOUNDER, trust: 0.5 }] }))).toBeNull();
+    // v4 entries carry positions always; a v4 pip without one is malformed, not migratable
+    expect(parseSave(JSON.stringify({ v: 4, pips: [{ ...somePip(), pos: null }] }))).toBeNull();
   });
 
   it('non-finite numbers that sneak past JSON', () => {
@@ -92,44 +125,50 @@ describe('parseSave clamps tampered values', () => {
     places[0] = 9;
     places[1] = -9;
     const tampered = JSON.stringify({
-      v: 3,
-      genes: { ...FOUNDER, boldness: 9, hue: -30, sat: 200 },
-      trust: 7,
-      needs: { food: 5, rest: -2, fun: 0.5 },
-      pos: somePos,
-      disp: { wariness: 12, attachment: -4 },
-      places,
+      v: 4,
+      pips: [{
+        genes: { ...FOUNDER, boldness: 9, hue: -30, sat: 200 },
+        trust: 7,
+        needs: { food: 5, rest: -2, fun: 0.5 },
+        pos: somePos,
+        disp: { wariness: 12, attachment: -4 },
+        places,
+      }],
     });
     const parsed = parseSave(tampered);
     expect(parsed).not.toBeNull();
-    expect(parsed!.genes.boldness).toBe(1);
-    expect(parsed!.genes.hue).toBe(330);
-    expect(parsed!.genes.sat).toBe(85);
-    expect(parsed!.trust).toBe(1);
-    expect(parsed!.needs.food).toBe(1);
-    expect(parsed!.needs.rest).toBe(0);
-    expect(parsed!.disp.wariness).toBe(1);
-    expect(parsed!.disp.attachment).toBe(0);
-    expect(parsed!.places[0]).toBe(1);
-    expect(parsed!.places[1]).toBe(-1);
+    const pip = parsed!.pips[0];
+    expect(pip.genes.boldness).toBe(1);
+    expect(pip.genes.hue).toBe(330);
+    expect(pip.genes.sat).toBe(85);
+    expect(pip.trust).toBe(1);
+    expect(pip.needs.food).toBe(1);
+    expect(pip.needs.rest).toBe(0);
+    expect(pip.disp.wariness).toBe(1);
+    expect(pip.disp.attachment).toBe(0);
+    expect(pip.places[0]).toBe(1);
+    expect(pip.places[1]).toBe(-1);
   });
 
   it('holds the floors too', () => {
     const tampered = JSON.stringify({
-      v: 3,
-      genes: { ...FOUNDER, boldness: -5, sat: 10, light: 20 },
-      trust: -3,
-      needs: someNeeds,
-      pos: somePos,
-      disp: someDisp,
-      places: freshPlaces(),
+      v: 4,
+      pips: [{
+        genes: { ...FOUNDER, boldness: -5, sat: 10, light: 20 },
+        trust: -3,
+        needs: someNeeds,
+        pos: somePos,
+        disp: someDisp,
+        places: freshPlaces(),
+      }],
     });
     const parsed = parseSave(tampered);
     expect(parsed).not.toBeNull();
-    expect(parsed!.genes.boldness).toBe(0);
-    expect(parsed!.genes.sat).toBe(35);
-    expect(parsed!.genes.light).toBe(48);
-    expect(parsed!.trust).toBe(0);
+    const pip = parsed!.pips[0];
+    expect(pip.genes.boldness).toBe(0);
+    expect(pip.genes.sat).toBe(35);
+    expect(pip.genes.light).toBe(48);
+    expect(pip.trust).toBe(0);
   });
 });
 
