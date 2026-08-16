@@ -161,6 +161,63 @@ body {
   border-radius: 50%;
 }
 
+#dna {
+  border-bottom: 1px solid #2a3947;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+#dna-title {
+  color: #8fa3b8;
+  font: 11px/1.6 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  margin-bottom: 4px;
+}
+
+#dna-strand {
+  font: 11px/1.7 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+  max-height: 132px;
+  overflow: auto;
+  letter-spacing: 1px;
+}
+
+#dna-strand .dna-tag {
+  color: hsl(var(--h) 90% 78%);
+  background: hsl(var(--h) 65% 22%);
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+#dna-strand .dna-body {
+  color: hsl(var(--h) 60% 58%);
+}
+
+#dna-strand .dna-junk {
+  color: #4b565f;
+}
+
+#dna-strand .dna-near {
+  color: #79858f;
+  animation: dna-shimmer 2.6s ease-in-out infinite;
+}
+
+@keyframes dna-shimmer {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+#dna-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 8px;
+  margin-top: 6px;
+  font: 9px/1.6 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.dna-key {
+  color: hsl(var(--h) 70% 62%);
+}
+
 body.treat-armed #treat-button {
   border-color: #e05c6e;
   box-shadow: 0 0 10px rgba(224, 92, 110, 0.5);

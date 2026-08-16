@@ -90,6 +90,68 @@ export function readsOf(strand: string): GeneRead[] {
   return reads;
 }
 
+export type StrandSpanKind = 'tag' | 'body' | 'junk' | 'nearTag';
+export interface StrandSpan {
+  kind: StrandSpanKind;
+  stat: DnaStat | null;
+  from: number;
+  to: number;
+}
+
+// a junk triple one substitution from a real tag — what a single flip could
+// bring to life
+function isNearTag(triple: string): boolean {
+  for (const tag of TAG_TO_STAT.keys()) {
+    let misses = 0;
+    for (let i = 0; i < TAG_LEN; i++) if (triple[i] !== tag[i]) misses++;
+    if (misses === 1) return true;
+  }
+  return false;
+}
+
+// the census view of a strand: every base classified by FUNCTION, not letter.
+// Tags outrank bodies so pleiotropy stays visible as a landmark inside the
+// gene it overlaps; the earliest read owns a contested body base; near-tags
+// are marked only where an awakened gene would actually have room to read
+export function annotate(strand: string): StrandSpan[] {
+  const kinds: StrandSpanKind[] = new Array<StrandSpanKind>(strand.length).fill('junk');
+  const stats: (DnaStat | null)[] = new Array<DnaStat | null>(strand.length).fill(null);
+  const reads = readsOf(strand);
+  for (const read of reads) {
+    for (let i = read.at + TAG_LEN; i < read.at + GENE_SPAN; i++) {
+      if (kinds[i] === 'junk') {
+        kinds[i] = 'body';
+        stats[i] = read.stat;
+      }
+    }
+  }
+  for (const read of reads) {
+    for (let i = read.at; i < read.at + TAG_LEN; i++) {
+      if (kinds[i] !== 'tag') {
+        kinds[i] = 'tag';
+        stats[i] = read.stat;
+      }
+    }
+  }
+  // scan first, paint after: painting inside the scan would hide a window
+  // that starts inside an earlier window's mark
+  const wakeable: number[] = [];
+  for (let at = 0; at + GENE_SPAN <= strand.length; at++) {
+    if (kinds[at] !== 'junk' || kinds[at + 1] !== 'junk' || kinds[at + 2] !== 'junk') continue;
+    if (isNearTag(strand.slice(at, at + TAG_LEN))) wakeable.push(at);
+  }
+  for (const at of wakeable) {
+    for (let i = at; i < at + TAG_LEN; i++) kinds[i] = 'nearTag';
+  }
+  const spans: StrandSpan[] = [];
+  for (let i = 0; i < strand.length; i++) {
+    const last = spans[spans.length - 1];
+    if (last && last.kind === kinds[i] && last.stat === stats[i]) last.to = i + 1;
+    else spans.push({ kind: kinds[i], stat: stats[i], from: i, to: i + 1 });
+  }
+  return spans;
+}
+
 // strand → the Genes struct everything else runs on. Duplicate tags average
 // (bounded, unlike summing); a stat with no tag at all defaults to the 0.5
 // midpoint, so deletion reverts toward the classic pip instead of crashing

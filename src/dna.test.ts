@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  annotate,
   DECODER_VERSION,
   decode,
   drift,
@@ -265,5 +266,80 @@ describe('drift', () => {
     expect(a).toBe(drift(FOUNDER_STRAND, 6, lcg(9)));
     expect(isValidStrand(a)).toBe(true);
     expect(a).not.toBe(FOUNDER_STRAND);
+  });
+});
+
+describe('annotate', () => {
+  const tiled = (strand: string) => {
+    const spans = annotate(strand);
+    let at = 0;
+    for (const s of spans) {
+      expect(s.from).toBe(at);
+      at = s.to;
+    }
+    expect(at).toBe(strand.length);
+    return spans;
+  };
+
+  it('maps the founder strand: 18 tag landmarks, 18 bodies, junk between', () => {
+    const spans = tiled(FOUNDER_STRAND);
+    expect(spans[0]).toEqual({ kind: 'tag', stat: 'boldness', from: 0, to: 3 });
+    const tags = spans.filter((s) => s.kind === 'tag');
+    expect(tags.map((s) => s.stat)).toEqual([
+      'boldness', 'clinginess', 'nosiness', 'liveliness', 'metabolism', 'stamina',
+      'playfulness', 'size', 'roundness', 'antLength', 'antTip', 'eyeSize',
+      'eyeGap', 'freckles', 'sat', 'light', 'hueX', 'hueY',
+    ]);
+    const bodies = spans.filter((s) => s.kind === 'body');
+    expect(bodies.length).toBe(18);
+    for (const b of bodies) expect(b.to - b.from).toBe(12);
+    const rest = spans.filter((s) => s.kind === 'junk' || s.kind === 'nearTag');
+    expect(rest.reduce((n, s) => n + s.to - s.from, 0)).toBe(FOUNDER_STRAND.length - 18 * 15);
+  });
+
+  it('junk one substitution from a tag shimmers as a near-tag', () => {
+    const dormant = FOUNDER_STRAND + 'CC' + 'AGT' + 'TTTTTTTTTTTT';
+    const spans = tiled(dormant);
+    const near = spans.filter((s) => s.kind === 'nearTag');
+    expect(near.length).toBeGreaterThan(0);
+    // the dormant region sits right after the founder strand
+    expect(near[0].from).toBeGreaterThanOrEqual(FOUNDER_STRAND.length);
+    // past the last spot with room for a body, nothing can wake: junk stays junk
+    expect(spans[spans.length - 1].kind).toBe('junk');
+  });
+
+  it('overlapping near-tag windows all shimmer, not just the first', () => {
+    // 'ATA' at 0 and 'TAC' at 1 are each one flip from a tag; their union must
+    // mark bases 0..4 even though the second window starts inside the first
+    const spans = tiled('ATAC' + 'AAAAAAAAAAAA');
+    expect(spans).toEqual([
+      { kind: 'nearTag', stat: null, from: 0, to: 4 },
+      { kind: 'junk', stat: null, from: 4, to: 16 },
+    ]);
+  });
+
+  it('a tag inside another body stays visible as a landmark (pleiotropy)', () => {
+    const spans = tiled('AGG' + 'TATAAAAAAAAA' + 'CCCCCCCCCCCC');
+    expect(spans).toEqual([
+      { kind: 'tag', stat: 'boldness', from: 0, to: 3 },
+      { kind: 'tag', stat: 'freckles', from: 3, to: 6 },
+      { kind: 'body', stat: 'boldness', from: 6, to: 15 },
+      { kind: 'body', stat: 'freckles', from: 15, to: 18 },
+      { kind: 'junk', stat: null, from: 18, to: 27 },
+    ]);
+  });
+
+  it('an empty strand has no spans', () => {
+    expect(annotate('')).toEqual([]);
+  });
+
+  it('always tiles arbitrary strands exactly', () => {
+    const rand = lcg(21);
+    for (let k = 0; k < 50; k++) {
+      const len = 60 + Math.floor(rand() * 240);
+      let strand = '';
+      for (let i = 0; i < len; i++) strand += 'ACGT'[Math.floor(rand() * 4)];
+      tiled(strand);
+    }
   });
 });

@@ -2,7 +2,7 @@ import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
 import { hueShift, type Genes } from './genes.ts';
-import { decode, drift, FOUNDER_STRAND } from './dna.ts';
+import { annotate, decode, drift, FOUNDER_STRAND, type DnaStat, type StrandSpanKind } from './dna.ts';
 import {
   chooseState,
   knock,
@@ -1148,7 +1148,7 @@ censusButton.addEventListener('click', () => {
 });
 
 function rebuildCensus(): void {
-  census.replaceChildren();
+  census.replaceChildren(dnaPanel);
   for (const pip of pips) {
     const row = document.createElement('button');
     row.className = 'census-row';
@@ -1164,6 +1164,71 @@ function rebuildCensus(): void {
   }
 }
 
+// each trait's census color, grouped by function — personality warm, tempo
+// green, looks blue, color pink — so the strand is read by meaning, not letter
+const STAT_HUES: Record<DnaStat, number> = {
+  boldness: 25,
+  clinginess: 45,
+  nosiness: 65,
+  liveliness: 90,
+  metabolism: 120,
+  stamina: 140,
+  playfulness: 160,
+  size: 190,
+  roundness: 205,
+  antLength: 220,
+  antTip: 235,
+  eyeSize: 250,
+  eyeGap: 265,
+  freckles: 280,
+  sat: 300,
+  light: 315,
+  hueX: 330,
+  hueY: 345,
+};
+const SPAN_CLASS: Record<StrandSpanKind, string> = {
+  tag: 'dna-tag',
+  body: 'dna-body',
+  junk: 'dna-junk',
+  nearTag: 'dna-near',
+};
+
+const statLabel = (stat: string): string => stat.replace(/([A-Z])/g, ' $1').toLowerCase();
+
+const dnaPanel = document.createElement('div');
+dnaPanel.id = 'dna';
+const dnaTitle = document.createElement('div');
+dnaTitle.id = 'dna-title';
+const dnaStrand = document.createElement('div');
+dnaStrand.id = 'dna-strand';
+const dnaLegend = document.createElement('div');
+dnaLegend.id = 'dna-legend';
+for (const [stat, hue] of Object.entries(STAT_HUES)) {
+  const key = document.createElement('span');
+  key.className = 'dna-key';
+  key.style.setProperty('--h', String(hue));
+  key.textContent = statLabel(stat);
+  dnaLegend.append(key);
+}
+dnaPanel.append(dnaTitle, dnaStrand, dnaLegend);
+
+// the selected pip's genome, colored by what each stretch DOES: tag landmarks,
+// bodies in their trait's hue, junk dimmed, dormant near-tags shimmering
+let dnaShownStrand = '';
+function updateDnaPanel(): void {
+  dnaTitle.textContent = `${selectedPip.name} · ${selectedPip.strand.length} bases`;
+  if (dnaShownStrand === selectedPip.strand) return;
+  dnaShownStrand = selectedPip.strand;
+  dnaStrand.replaceChildren();
+  for (const span of annotate(selectedPip.strand)) {
+    const bit = document.createElement('span');
+    bit.className = SPAN_CLASS[span.kind];
+    if (span.stat !== null) bit.style.setProperty('--h', String(STAT_HUES[span.stat]));
+    bit.textContent = selectedPip.strand.slice(span.from, span.to);
+    dnaStrand.append(bit);
+  }
+}
+
 function updateCensus(t: number): void {
   census.hidden = !censusOpen;
   censusButton.classList.toggle('active', censusOpen);
@@ -1176,8 +1241,9 @@ function updateCensus(t: number): void {
   // rewriting hundreds of rows every frame janks — a few refreshes a second reads the same
   if (t - censusRefreshedAt < 0.25) return;
   censusRefreshedAt = t;
+  updateDnaPanel();
   for (const [i, row] of [...census.children].entries()) {
-    const pip = pips[i];
+    const pip = pips[i - 1]; // child 0 is the dna panel; rows follow
     if (!pip) continue;
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     (row.lastElementChild as HTMLElement).textContent =
