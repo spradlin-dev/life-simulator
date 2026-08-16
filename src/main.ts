@@ -100,8 +100,14 @@ toastReload.addEventListener('click', () => void updateSW(true));
 // ------------------------------------------------------------------ treats
 
 const TREAT_LIFE = 60;
-const TREAT_CAP = 10;
+const TREAT_CAP = 100;
 const SPLIT_SWELL_S = 1.4;
+// starving is loud long before it is final: the fade begins two sim-minutes in,
+// the poof lands at three — and only ever while the player is present, since
+// blur/hidden freeze the world entirely
+const STARVE_FADE_AT = 120;
+const STARVE_POOF_AT = 180;
+const POOF_S = 0.9;
 let treatArmed = false;
 
 const treatButton = document.getElementById('treat-button') as HTMLButtonElement;
@@ -180,6 +186,8 @@ interface Pip {
   grown: number;
   splitFor: number;
   sinceSplit: number;
+  starvingFor: number;
+  poofFor: number;
   wanderTarget: Vec | null;
   pauseFor: number;
   blinkIn: number;
@@ -214,6 +222,8 @@ function makePip(genes: Genes, x: number, y: number, generation = 0, name = make
     // scattered readiness at creation, so a fresh or reloaded flock never
     // arrives synchronized (a newborn's 0 is set by divide)
     sinceSplit: SPLIT_COOLDOWN * (0.35 + Math.random() * 0.65),
+    starvingFor: 0,
+    poofFor: 0,
     wanderTarget: null,
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
@@ -233,6 +243,52 @@ function randomSpot(): Vec {
     x: 80 + Math.random() * Math.max(0, view.w - 160),
     y: 80 + Math.random() * Math.max(0, view.h - 160),
   };
+}
+
+// the goodbye is a soft handful of pastel sparks, never a body
+interface Sparkle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  hue: number;
+}
+
+const sparkles: Sparkle[] = [];
+
+function spawnSparkles(pip: Pip): void {
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.random() * 0.5;
+    sparkles.push({
+      x: pip.x,
+      y: pip.y,
+      vx: Math.cos(a) * (30 + Math.random() * 40),
+      vy: Math.sin(a) * (30 + Math.random() * 40) - 20,
+      age: 0,
+      hue: pip.genes.hue,
+    });
+  }
+}
+
+function updateAndDrawSparkles(dt: number): void {
+  for (let i = sparkles.length - 1; i >= 0; i--) {
+    const s = sparkles[i];
+    s.age += dt;
+    if (s.age > 1) {
+      sparkles.splice(i, 1);
+      continue;
+    }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.vy -= 10 * dt;
+    ctx.globalAlpha = 1 - s.age;
+    ctx.fillStyle = `hsl(${s.hue.toFixed(1)}, 60%, 80%)`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 2.2 * (1 - s.age * 0.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function clampToWorld(x: number, y: number, margin = 26): Vec {
@@ -724,8 +780,14 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     const p = 1 - pip.splitFor / SPLIT_SWELL_S;
     swell = 1 + p * 0.18 + Math.sin(p * Math.PI * 8) * 0.06 * p;
   }
+  // a poofing pip shrinks away; a long-starving one grows translucent first
+  const poofScale = pip.poofFor > 0 ? pip.poofFor / POOF_S : 1;
+  if (pip.starvingFor > STARVE_FADE_AT) {
+    const gone = Math.min(1, (pip.starvingFor - STARVE_FADE_AT) / (STARVE_POOF_AT - STARVE_FADE_AT));
+    ctx.globalAlpha = 1 - 0.45 * gone;
+  }
   const g = pip.genes;
-  const R = 24 * lerp(0.85, 1.15, g.size) * pip.grown * swell;
+  const R = 24 * lerp(0.85, 1.15, g.size) * pip.grown * swell * poofScale;
   const stretch = Math.min(0.22, speed / 900);
   // roundness bends the silhouette: low = tall bean, high = wide bun, 0.5 = classic
   const wide = lerp(-0.1, 0.1, g.roundness);
@@ -874,8 +936,8 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     ctx.textAlign = 'center';
     ctx.fillStyle = EMOTE_COLORS[pip.emote] ?? '#dfe8f0';
     ctx.fillText(pip.emote, x + 16, y - R - 14 - rise);
-    ctx.globalAlpha = 1;
   }
+  ctx.globalAlpha = 1;
 }
 
 // ------------------------------------------------------------------ selection
@@ -1079,6 +1141,7 @@ function frame(now: number): void {
   }
 
   const born: Pip[] = [];
+  const leaving: Pip[] = [];
   // in-flight swells are committed growth: counting them in the gate means the
   // population can never overshoot the cap while divisions are mid-animation
   let reserved = 0;
@@ -1123,6 +1186,21 @@ function frame(now: number): void {
     updateAntenna(pip, dt, sulkFactor);
     updateTimers(pip, dt, sulkFactor);
 
+    // the gentle goodbye: a long-empty belly fades a pip, and if nobody ever
+    // feeds it, it shrinks and poofs into sparkles. any bite cancels everything
+    if (pip.needs.food <= 0) pip.starvingFor += dt;
+    else pip.starvingFor = 0;
+    if (pip.poofFor > 0 && pip.needs.food > 0) {
+      pip.poofFor = 0;
+      showEmote(pip, '♥');
+    } else if (pip.poofFor > 0) {
+      pip.poofFor -= dt;
+      if (pip.poofFor <= 0) leaving.push(pip);
+    } else if (pip.starvingFor >= STARVE_POOF_AT) {
+      pip.poofFor = POOF_S;
+      showEmote(pip, '✧');
+    }
+
     // mitosis: a hazard rate, not a timer — settled, well-lived pips sometimes
     // just... double
     pip.sinceSplit += dt;
@@ -1140,12 +1218,31 @@ function frame(now: number): void {
       }
     } else if (
       settled &&
+      pip.poofFor <= 0 &&
       pips.length + born.length + reserved < MAX_SAVED_PIPS &&
       Math.random() < splitChance(happiness, pip.sinceSplit, dt, fecund)
     ) {
       pip.splitFor = SPLIT_SWELL_S;
       reserved++;
     }
+  }
+
+  if (leaving.length) {
+    for (const pip of leaving) {
+      spawnSparkles(pip);
+      pips.splice(pips.indexOf(pip), 1);
+    }
+    // the meadow never stays empty: a new little one wanders in
+    if (pips.length === 0) {
+      const spot = randomSpot();
+      const arrival = makePip(descend(FOUNDER, 6), spot.x, spot.y);
+      showEmote(arrival, '✧');
+      pips.push(arrival);
+    }
+    if (!pips.includes(selectedPip)) selectedPip = pips[0];
+    flockVersion++;
+    sinceSave = 0;
+    storeSave(snapshotWorld());
   }
 
   if (born.length) {
@@ -1158,6 +1255,7 @@ function frame(now: number): void {
   ctx.clearRect(0, 0, view.w, view.h);
   drawTouchGhost();
   drawTreats(t);
+  updateAndDrawSparkles(dt);
   for (const pip of pips) {
     const sulkFactor = sulkOf(happinessOf(pip.needs, pip.moods.trust, pip.moods.fear));
     drawPip(pip, t, pip === selectedPip && pips.length > 1, sulkFactor);
