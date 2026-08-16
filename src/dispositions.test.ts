@@ -4,6 +4,7 @@ import {
   fadePlaces,
   freshPlaces,
   FRESH_DISPOSITIONS,
+  isHealing,
   learn,
   markPlace,
   PLACE_CELLS,
@@ -60,6 +61,15 @@ describe('learn', () => {
     const extreme = live(FRESH_DISPOSITIONS, 1, 0, 3600);
     expect(extreme.wariness).toBeLessThanOrEqual(1);
     expect(extreme.attachment).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('isHealing', () => {
+  it('is visible exactly when good times meet a visibly wary pip', () => {
+    expect(isHealing({ wariness: 0.5, attachment: 0 }, 0.8)).toBe(true);
+    expect(isHealing({ wariness: 0.5, attachment: 0 }, 0.6)).toBe(false);
+    expect(isHealing({ wariness: 0.2, attachment: 0 }, 0.9)).toBe(false);
+    expect(isHealing({ wariness: 0, attachment: 0 }, 0.9)).toBe(false);
   });
 });
 

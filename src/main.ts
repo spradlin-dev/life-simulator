@@ -17,9 +17,11 @@ import {
   fadePlaces,
   FRESH_DISPOSITIONS,
   freshPlaces,
+  isHealing,
   learn,
   markPlace,
   placeAt,
+  WARY_AT,
   type Dispositions,
 } from './dispositions.ts';
 import { createInput } from './input.ts';
@@ -183,6 +185,7 @@ interface Pip {
   emoteFor: number;
   quirk: Quirk | null;
   quirkFor: number;
+  celebrate: boolean;
   munchFor: number;
   munchTarget: Treat | null;
   antenna: { x: number; y: number; vx: number; vy: number };
@@ -215,6 +218,7 @@ function makePip(genes: Genes, x: number, y: number, generation = 0): Pip {
     emoteFor: 0,
     quirk: null,
     quirkFor: 0,
+    celebrate: false,
     munchFor: 0,
     munchTarget: null,
     antenna: { x, y: y - 42, vx: 0, vy: 0 },
@@ -574,6 +578,12 @@ function updateTimers(pip: Pip, dt: number, sulkFactor: number): void {
   pip.grown = Math.min(1, pip.grown + dt / 30);
   pip.blinkIn -= dt;
   if (pip.blinkIn < -0.12) pip.blinkIn = 1.5 + Math.random() * 4;
+  if (pip.celebrate && inIdleState(pip)) {
+    pip.celebrate = false;
+    showEmote(pip, '♥');
+    pip.quirk = 'wiggle';
+    pip.quirkFor = QUIRK_SECONDS.wiggle;
+  }
   if (pip.quirk) {
     if (!inIdleState(pip)) {
       pip.quirk = null; // a scare or sleep interrupts whatever it was doing
@@ -635,17 +645,22 @@ function drawTreats(t: number): void {
 
 // genetic base color with relative mood tinting: fear cools and washes out,
 // snuggling warms, misery grays everything down
-function bodyColorOf(pip: Pip, sulkFactor: number): string {
+function bodyColorOf(pip: Pip, sulkFactor: number, hungry: number): string {
   const g = pip.genes;
   const fear = pip.moods.fear;
   let h = hueShift(g.hue, 250, fear * 0.4);
-  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulkFactor);
-  const l = g.light + fear * 5 - sulkFactor * 4;
+  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulkFactor) * (1 - hungry * 0.2);
+  const l = g.light + fear * 5 - sulkFactor * 4 - hungry * 3;
   if (pip.state === 'snuggle') {
     h = hueShift(h, 30, 0.35);
     s = Math.min(90, s + 12);
   }
   return `hsl(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%)`;
+}
+
+// an empty belly is worn on the body: sagging posture, damped bounce, dimmer color
+function hungerOf(pip: Pip): number {
+  return Math.max(0, (0.45 - pip.needs.food) / 0.45);
 }
 
 const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e' };
@@ -692,11 +707,12 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     mouthOpen = Math.abs(Math.sin(pip.munchFor * Math.PI * 4)) * 0.6;
   }
 
+  const hungry = hungerOf(pip);
   const bob = asleep
     ? Math.sin(t * 2) * 1.5
-    : Math.sin(t * (6 + speed / 40)) * Math.min(3, 1 + speed / 80);
+    : Math.sin(t * (6 + speed / 40)) * Math.min(3, 1 + speed / 80) * (1 - hungry * 0.5);
   const x = pip.x + jx + jiggle;
-  const y = pip.y + jy + bob;
+  const y = pip.y + jy + bob + hungry * 2;
 
   // newborns are small and regrow; a dividing pip swells and shudders
   let swell = 1;
@@ -709,7 +725,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   const sx = (1 + stretch) * (1 - stretchPose * 0.35);
   const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose);
   const squish = pip.state === 'cower' ? 0.78 : 1;
-  const color = bodyColorOf(pip, sulkFactor);
+  const color = bodyColorOf(pip, sulkFactor, hungry);
 
   // the watcher's quiet mark on whoever they are watching — pips can't sense it
   if (isSelected) {
@@ -747,10 +763,16 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   ctx.ellipse(x, y, R * sx, R * sy * squish, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // blush
+  // fondness shows: blush blooms near a trusted watcher, brightest mid-snuggle
   const eyeY = y - 4;
-  if (pip.state === 'snuggle') {
-    ctx.fillStyle = 'rgba(255, 130, 150, 0.4)';
+  const distNow = Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
+  const fondness = pip.state === 'snuggle'
+    ? 1
+    : pointer.presence > 0 && distNow < 260 && pip.moods.trust > 0.6
+      ? ((pip.moods.trust - 0.6) / 0.4) * pointer.presence
+      : 0;
+  if (fondness > 0.05) {
+    ctx.fillStyle = `rgba(255, 130, 150, ${(0.4 * fondness).toFixed(3)})`;
     for (const side of [-1, 1]) {
       ctx.beginPath();
       ctx.ellipse(x + side * 13, eyeY + 8, 4.5, 3, 0, 0, Math.PI * 2);
@@ -779,6 +801,8 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     lookY = 0;
   }
   const blinking = pip.blinkIn < 0 || mouthOpen > 0.35;
+  // tiredness sits on the eyelids: they sink as rest drains
+  const lid = Math.max(0, (0.5 - pip.needs.rest) / 0.5) * 0.65;
   for (const side of [-1, 1]) {
     const ex = x + side * 9;
     if (asleep || blinking) {
@@ -789,15 +813,22 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
       ctx.stroke();
       continue;
     }
+    const eyeR = 5.5 + pip.moods.fear * 2.5;
     ctx.fillStyle = '#f4f7f5';
     ctx.beginPath();
-    ctx.arc(ex, eyeY, 5.5 + pip.moods.fear * 2.5, 0, Math.PI * 2);
+    ctx.arc(ex, eyeY, eyeR, 0, Math.PI * 2);
     ctx.fill();
     const pupil = Math.max(1.2, Math.min(4.2, 2 + pip.moods.curiosity * 2 - pip.moods.fear * 1.4));
     ctx.fillStyle = '#1c2733';
     ctx.beginPath();
     ctx.arc(ex + lookX, eyeY + lookY, pupil, 0, Math.PI * 2);
     ctx.fill();
+    if (lid > 0.02) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(ex, eyeY - eyeR * (2 - 1.7 * lid), eyeR + 1.5, eyeR, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // mouth (yawns and munching)
@@ -897,7 +928,7 @@ function updateCensus(): void {
     if (!pip) continue;
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     (row.lastElementChild as HTMLElement).textContent =
-      `pip ${i + 1} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp)} · ${meter(happiness)}`;
+      `pip ${i + 1} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)}`;
     row.classList.toggle('selected', pip === selectedPip);
   }
 }
@@ -928,7 +959,7 @@ const MOOD_LABELS: Record<CritterState, string> = {
   curious: 'intrigued…',
   follow: 'tagging along',
   flee: 'nope nope nope',
-  cower: 'too scared to move',
+  cower: 'frozen — be gentle',
   snuggle: 'happy near you',
   snack: 'munch munch',
   sleep: 'fast asleep',
@@ -948,10 +979,11 @@ function natureLabel(g: Genes): string {
 }
 
 // what life has made of it, appended to what it was born as
-function temperSuffix(d: Dispositions): string {
+function temperSuffix(d: Dispositions, healing = false): string {
   const parts: string[] = [];
-  if (d.wariness > 0.7) parts.push('scarred');
-  else if (d.wariness > 0.4) parts.push('wary');
+  if (d.wariness > 0.7) parts.push('shy');
+  else if (d.wariness > WARY_AT) parts.push('wary');
+  if (healing) parts.push('healing');
   if (d.attachment > 0.7) parts.push('devoted');
   else if (d.attachment > 0.4) parts.push('fond');
   return parts.length ? ' · ' + parts.join(', ') : '';
@@ -970,7 +1002,7 @@ function updateHud(): void {
     : 'pip';
   hud.textContent =
     `${who}: ${MOOD_LABELS[pip.state]}\n` +
-    `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp)}\n` +
+    `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))}\n` +
     `mood      ${meter(happiness)}\n` +
     `trust     ${meter(pip.moods.trust)}\n` +
     `fear      ${meter(pip.moods.fear)}\n` +
@@ -1051,7 +1083,10 @@ function frame(now: number): void {
     const sulkFactor = sulkOf(happiness);
 
     // terror leaves marks: on the self, and on the place where it happened
+    const wasWary = pip.disp.wariness;
     pip.disp = learn(pip.disp, pip.moods.fear, happiness, dt);
+    // forgiveness earns a celebration, held until the pip is calm enough to feel it
+    if (wasWary >= WARY_AT && pip.disp.wariness < WARY_AT) pip.celebrate = true;
     pip.places = fadePlaces(pip.places, dt);
     if (pip.moods.fear > 0.6 && fearAtFrameStart[i] <= 0.6) {
       pip.places = markPlace(pip.places, pip.x / view.w, pip.y / view.h, -0.34);

@@ -10,6 +10,13 @@ export interface Dispositions {
 
 export const FRESH_DISPOSITIONS: Dispositions = { wariness: 0, attachment: 0 };
 
+// the boundary where wariness becomes visible ('wary') and where the
+// forgiveness celebration fires — one constant so they can never desync
+export const WARY_AT = 0.4;
+// the happiness band where good times reshape a soul (learn) and where the
+// player is told repair is underway (isHealing)
+export const GOOD_TIMES_AT = 0.7;
+
 // every disposition, checked complete at compile time (save validation walks this)
 const DISP_FIELD_SET: Record<keyof Dispositions, true> = { wariness: true, attachment: true };
 export const DISP_FIELDS = Object.keys(DISP_FIELD_SET) as readonly (keyof Dispositions)[];
@@ -22,10 +29,10 @@ export const DISP_FIELDS = Object.keys(DISP_FIELD_SET) as readonly (keyof Dispos
 export function learn(disp: Dispositions, fear: number, happiness: number, dt: number): Dispositions {
   let wariness = disp.wariness;
   if (fear > 0.6) wariness += (fear - 0.6) * dt * 0.02;
-  else if (happiness > 0.7) wariness -= dt * 0.0008;
+  else if (happiness > GOOD_TIMES_AT) wariness -= dt * 0.0008;
   let attachment = disp.attachment;
   if (fear > 0.8) attachment -= dt * 0.01;
-  else if (happiness > 0.7) attachment += dt * 0.0015;
+  else if (happiness > GOOD_TIMES_AT) attachment += dt * 0.0015;
   return { wariness: clamp01(wariness), attachment: clamp01(attachment) };
 }
 
@@ -39,6 +46,12 @@ export function effectiveGenes(genes: Genes, disp: Dispositions): Genes {
     boldness: clamp01(genes.boldness - disp.wariness * 0.35),
     clinginess: clamp01(genes.clinginess + disp.attachment * 0.3),
   };
+}
+
+// true while good times are softening a VISIBLY wary pip — the display
+// contract: 'healing' always appears beside the label it explains
+export function isHealing(disp: Dispositions, happiness: number): boolean {
+  return happiness > GOOD_TIMES_AT && disp.wariness > WARY_AT;
 }
 
 // ------------------------------------------------------------------ place memory
