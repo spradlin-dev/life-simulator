@@ -23,9 +23,17 @@ function somePip(overrides: Partial<LivePip> = {}): LivePip {
     disp: someDisp,
     places: somePlaces(),
     generation: 3,
+    name: 'Tester',
     ...overrides,
   };
 }
+
+// a genome as saves wrote it before the visual traits existed
+const OLD_GENES = {
+  boldness: 0.5, clinginess: 0.5, nosiness: 0.5, liveliness: 0.5,
+  hue: 159, sat: 53, light: 63,
+};
+const NAME_SHAPE = /^[A-Za-z]+$/;
 
 describe('save round-trip', () => {
   it('returns exactly the roster that was stored', () => {
@@ -43,43 +51,49 @@ describe('save round-trip', () => {
 
 describe('migrations keep the pip', () => {
   it('v1 becomes a population of one with fresh needs, unknown position, and a clean slate', () => {
-    const v1 = JSON.stringify({ v: 1, genes: FOUNDER, trust: 0.73 });
-    expect(parseSave(v1)).toEqual({
-      pips: [{
-        genes: FOUNDER,
-        trust: 0.73,
-        needs: FRESH_NEEDS,
-        pos: null,
-        disp: FRESH_DISPOSITIONS,
-        places: freshPlaces(),
-        generation: 0,
-      }],
+    const v1 = JSON.stringify({ v: 1, genes: OLD_GENES, trust: 0.73 });
+    const parsed = parseSave(v1);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips).toHaveLength(1);
+    expect(parsed!.pips[0]).toMatchObject({
+      genes: FOUNDER,
+      trust: 0.73,
+      needs: FRESH_NEEDS,
+      pos: null,
+      disp: FRESH_DISPOSITIONS,
+      places: freshPlaces(),
+      generation: 0,
     });
+    expect(parsed!.pips[0].name).toMatch(NAME_SHAPE);
   });
 
   it('v2 keeps needs and position, gains a clean slate of memories', () => {
-    const v2 = JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos });
-    expect(parseSave(v2)).toEqual({
-      pips: [{
-        genes: FOUNDER,
-        trust: 0.73,
-        needs: someNeeds,
-        pos: somePos,
-        disp: FRESH_DISPOSITIONS,
-        places: freshPlaces(),
-        generation: 0,
-      }],
+    const v2 = JSON.stringify({ v: 2, genes: OLD_GENES, trust: 0.73, needs: someNeeds, pos: somePos });
+    const parsed = parseSave(v2);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0]).toMatchObject({
+      genes: FOUNDER,
+      trust: 0.73,
+      needs: someNeeds,
+      pos: somePos,
+      disp: FRESH_DISPOSITIONS,
+      places: freshPlaces(),
+      generation: 0,
     });
+    expect(parsed!.pips[0].name).toMatch(NAME_SHAPE);
   });
 
   it('v3 keeps everything it had', () => {
     const places = somePlaces();
     const v3 = JSON.stringify({
-      v: 3, genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places,
+      v: 3, genes: OLD_GENES, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places,
     });
-    expect(parseSave(v3)).toEqual({
-      pips: [{ genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places, generation: 0 }],
+    const parsed = parseSave(v3);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0]).toMatchObject({
+      genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places, generation: 0,
     });
+    expect(parsed!.pips[0].name).toMatch(NAME_SHAPE);
   });
 
   it('v4 rosters gain generation zero', () => {
@@ -87,6 +101,22 @@ describe('migrations keep the pip', () => {
     const parsed = parseSave(v4);
     expect(parsed).not.toBeNull();
     expect(parsed!.pips.map((p) => p.generation)).toEqual([0, 0]);
+    expect(parsed!.pips.map((p) => p.name).every((n) => NAME_SHAPE.test(n))).toBe(true);
+  });
+
+  it('pre-visual genomes come back looking exactly like themselves', () => {
+    const v5 = JSON.stringify({ v: 5, pips: [{ ...somePip(), genes: OLD_GENES }] });
+    const parsed = parseSave(v5);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+  });
+
+  it('v6 keeps names, salvages mangled ones, and demands complete genomes', () => {
+    const kept = parseSave(JSON.stringify({ v: 6, pips: [somePip()] }));
+    expect(kept!.pips[0].name).toBe('Tester');
+    const mangled = parseSave(JSON.stringify({ v: 6, pips: [{ ...somePip(), name: 1234 }] }));
+    expect(mangled!.pips[0].name).toMatch(NAME_SHAPE);
+    expect(parseSave(JSON.stringify({ v: 6, pips: [{ ...somePip(), genes: OLD_GENES }] }))).toBeNull();
   });
 });
 
@@ -95,7 +125,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 6, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 7, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { descend, FOUNDER, hueShift, mutate } from './genes.ts';
+import { descend, DIAL_FIELDS, FOUNDER, hueShift, mutate, sanitizeGenes } from './genes.ts';
 import { gaussian } from './math.ts';
 
 // deterministic stand-in for Math.random: cycles the given values
@@ -45,6 +45,27 @@ describe('mutate', () => {
     expect(g.light).toBeGreaterThanOrEqual(48);
     expect(g.hue).toBeGreaterThanOrEqual(0);
     expect(g.hue).toBeLessThan(360);
+  });
+
+  it('drifts every dial, visual traits included', () => {
+    const upward = seq(0.9, 0);
+    const g = mutate(FOUNDER, upward);
+    for (const field of DIAL_FIELDS) {
+      expect(g[field]).not.toBe(FOUNDER[field]);
+      expect(g[field]).toBeGreaterThanOrEqual(0);
+      expect(g[field]).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('sanitizeGenes', () => {
+  it('clamps every dial back into 0..1', () => {
+    const wild = { ...FOUNDER, size: 9, roundness: -3, freckles: 42, eyeGap: -1 };
+    const clean = sanitizeGenes(wild);
+    for (const field of DIAL_FIELDS) {
+      expect(clean[field]).toBeGreaterThanOrEqual(0);
+      expect(clean[field]).toBeLessThanOrEqual(1);
+    }
   });
 });
 

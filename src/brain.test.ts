@@ -24,6 +24,13 @@ const plain: Genes = {
   hue: 159,
   sat: 53,
   light: 63,
+  size: 0.5,
+  roundness: 0.5,
+  antLength: 0.5,
+  antTip: 0.5,
+  eyeSize: 0.5,
+  eyeGap: 0.5,
+  freckles: 0.5,
 };
 
 function senses(overrides: Partial<Senses> = {}): Senses {

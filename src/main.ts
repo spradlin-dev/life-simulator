@@ -25,6 +25,7 @@ import {
   type Dispositions,
 } from './dispositions.ts';
 import { createInput } from './input.ts';
+import { makeName } from './names.ts';
 import { clearSave, loadSave, MAX_SAVED_PIPS, storeSave, type LivePip } from './save.ts';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN } from './mitosis.ts';
 
@@ -175,6 +176,7 @@ interface Pip {
   disp: Dispositions;
   places: number[];
   generation: number;
+  name: string;
   grown: number;
   splitFor: number;
   sinceSplit: number;
@@ -191,7 +193,7 @@ interface Pip {
   antenna: { x: number; y: number; vx: number; vy: number };
 }
 
-function makePip(genes: Genes, x: number, y: number, generation = 0): Pip {
+function makePip(genes: Genes, x: number, y: number, generation = 0, name = makeName()): Pip {
   return {
     x,
     y,
@@ -206,6 +208,7 @@ function makePip(genes: Genes, x: number, y: number, generation = 0): Pip {
     disp: { ...FRESH_DISPOSITIONS },
     places: freshPlaces(),
     generation,
+    name,
     grown: 1,
     splitFor: 0,
     // scattered readiness at creation, so a fresh or reloaded flock never
@@ -250,6 +253,7 @@ function snapshotWorld(): LivePip[] {
     disp: pip.disp,
     places: pip.places,
     generation: pip.generation,
+    name: pip.name,
   }));
 }
 
@@ -263,7 +267,7 @@ const saved = loadSave();
 if (saved) {
   for (const entry of saved.pips) {
     const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
-    const pip = makePip(entry.genes, spot.x, spot.y, entry.generation);
+    const pip = makePip(entry.genes, spot.x, spot.y, entry.generation, entry.name);
     pip.moods.trust = entry.trust;
     pip.needs = entry.needs;
     pip.disp = entry.disp;
@@ -548,7 +552,7 @@ function updateAntenna(pip: Pip, dt: number, sulkFactor: number): void {
   const a = pip.antenna;
   const droop = sulkFactor * 14;
   a.vx += (pip.x - pip.facing * 4 - a.x) * 60 * dt;
-  a.vy += (pip.y - 42 * pip.grown + droop - a.y) * 60 * dt;
+  a.vy += (pip.y - lerp(30, 54, pip.genes.antLength) * pip.grown + droop - a.y) * 60 * dt;
   a.vx *= Math.max(0, 1 - 6 * dt);
   a.vy *= Math.max(0, 1 - 6 * dt);
   a.x += a.vx * dt;
@@ -720,10 +724,13 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     const p = 1 - pip.splitFor / SPLIT_SWELL_S;
     swell = 1 + p * 0.18 + Math.sin(p * Math.PI * 8) * 0.06 * p;
   }
-  const R = 24 * pip.grown * swell;
+  const g = pip.genes;
+  const R = 24 * lerp(0.85, 1.15, g.size) * pip.grown * swell;
   const stretch = Math.min(0.22, speed / 900);
-  const sx = (1 + stretch) * (1 - stretchPose * 0.35);
-  const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose);
+  // roundness bends the silhouette: low = tall bean, high = wide bun, 0.5 = classic
+  const wide = lerp(-0.1, 0.1, g.roundness);
+  const sx = (1 + stretch) * (1 - stretchPose * 0.35) * (1 + wide);
+  const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose) * (1 - wide);
   const squish = pip.state === 'cower' ? 0.78 : 1;
   const color = bodyColorOf(pip, sulkFactor, hungry);
 
@@ -755,13 +762,32 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   ctx.stroke();
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(pip.antenna.x, pip.antenna.y, 4, 0, Math.PI * 2);
+  ctx.arc(pip.antenna.x, pip.antenna.y, lerp(2, 6, g.antTip), 0, Math.PI * 2);
   ctx.fill();
 
   // body
   ctx.beginPath();
   ctx.ellipse(x, y, R * sx, R * sy * squish, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // freckles: only past the midpoint band, seeded from the genome so each
+  // pip's pattern is its own and never flickers
+  if (g.freckles > 0.55) {
+    const count = 1 + Math.floor(((g.freckles - 0.55) / 0.45) * 5);
+    let seed = Math.floor(g.hue * 7 + g.sat * 13 + g.light * 31 + g.freckles * 97);
+    const next = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    ctx.fillStyle = `hsl(${g.hue.toFixed(1)}, ${g.sat.toFixed(1)}%, ${Math.max(20, g.light - 18).toFixed(1)}%)`;
+    for (let i = 0; i < count; i++) {
+      const fx = x + (next() - 0.5) * R * 1.3;
+      const fy = y + R * 0.35 + next() * R * 0.4;
+      ctx.beginPath();
+      ctx.arc(fx, fy, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   // fondness shows: blush blooms near a trusted watcher, brightest mid-snuggle
   const eyeY = y - 4;
@@ -803,8 +829,9 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   const blinking = pip.blinkIn < 0 || mouthOpen > 0.35;
   // tiredness sits on the eyelids: they sink as rest drains
   const lid = Math.max(0, (0.5 - pip.needs.rest) / 0.5) * 0.65;
+  const eyeGap = lerp(6.5, 11.5, g.eyeGap);
   for (const side of [-1, 1]) {
-    const ex = x + side * 9;
+    const ex = x + side * eyeGap;
     if (asleep || blinking) {
       ctx.strokeStyle = '#1c2733';
       ctx.lineWidth = 2;
@@ -813,7 +840,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
       ctx.stroke();
       continue;
     }
-    const eyeR = 5.5 + pip.moods.fear * 2.5;
+    const eyeR = lerp(4, 7, g.eyeSize) + pip.moods.fear * 2.5;
     ctx.fillStyle = '#f4f7f5';
     ctx.beginPath();
     ctx.arc(ex, eyeY, eyeR, 0, Math.PI * 2);
@@ -863,16 +890,16 @@ function dotColor(g: Genes): string {
 
 function rebuildRoster(): void {
   roster.replaceChildren();
-  pips.forEach((pip, i) => {
+  for (const pip of pips) {
     const dot = document.createElement('button');
     dot.className = 'dot';
     dot.style.background = dotColor(pip.genes);
-    dot.setAttribute('aria-label', `pip ${i + 1}`);
+    dot.setAttribute('aria-label', pip.name);
     dot.addEventListener('click', () => {
       selectedPip = pip;
     });
     roster.append(dot);
-  });
+  }
 }
 
 function updateRoster(): void {
@@ -928,7 +955,7 @@ function updateCensus(): void {
     if (!pip) continue;
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     (row.lastElementChild as HTMLElement).textContent =
-      `pip ${i + 1} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)}`;
+      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)}`;
     row.classList.toggle('selected', pip === selectedPip);
   }
 }
@@ -998,8 +1025,8 @@ function updateHud(): void {
   const pip = selectedPip;
   const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
   const who = pips.length > 1
-    ? `pip ${pips.indexOf(pip) + 1}/${pips.length} · gen ${pip.generation}`
-    : 'pip';
+    ? `${pip.name} · ${pips.indexOf(pip) + 1}/${pips.length} · gen ${pip.generation}`
+    : pip.name;
   hud.textContent =
     `${who}: ${MOOD_LABELS[pip.state]}\n` +
     `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))}\n` +
