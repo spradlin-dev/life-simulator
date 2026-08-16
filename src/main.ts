@@ -293,6 +293,20 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => storeSave(snapshotWorld()));
 
+// the world holds its breath while you work elsewhere: an unfocused window
+// freezes sim time entirely, so stepping away never costs a pip anything
+let paused = !document.hasFocus();
+window.addEventListener('blur', () => {
+  paused = true;
+  document.body.classList.add('paused');
+  storeSave(snapshotWorld());
+});
+window.addEventListener('focus', () => {
+  paused = false;
+  document.body.classList.remove('paused');
+});
+if (paused) document.body.classList.add('paused');
+
 // one pip becomes two: the pure outcome from mitosis.ts, plus the fresh-start
 // rule — lifetime scars and place memories do NOT survive a division
 function divide(parent: Pip): Pip {
@@ -973,6 +987,10 @@ let sinceSave = 0;
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
   last = now;
+  if (paused) {
+    requestAnimationFrame(frame);
+    return;
+  }
   const t = now / 1000;
 
   input.update(dt);

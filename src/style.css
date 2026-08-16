@@ -27,6 +27,7 @@ body {
   height: 100%;
   display: block;
   touch-action: none;
+  transition: filter 0.4s ease;
 }
 
 #hud {
@@ -179,6 +180,10 @@ body.treat-armed #treat-button {
 
 body.treat-armed #world {
   cursor: copy;
+}
+
+body.paused #world {
+  filter: grayscale(0.5) brightness(0.8);
 }
 
 #roster {
