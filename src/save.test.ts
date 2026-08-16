@@ -22,6 +22,7 @@ function somePip(overrides: Partial<LivePip> = {}): LivePip {
     pos: somePos,
     disp: someDisp,
     places: somePlaces(),
+    generation: 3,
     ...overrides,
   };
 }
@@ -34,6 +35,7 @@ describe('save round-trip', () => {
       trust: 0.2,
       pos: { x: 900, y: 40 },
       places: freshPlaces(),
+      generation: 0,
     });
     expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b] });
   });
@@ -50,6 +52,7 @@ describe('migrations keep the pip', () => {
         pos: null,
         disp: FRESH_DISPOSITIONS,
         places: freshPlaces(),
+        generation: 0,
       }],
     });
   });
@@ -64,6 +67,7 @@ describe('migrations keep the pip', () => {
         pos: somePos,
         disp: FRESH_DISPOSITIONS,
         places: freshPlaces(),
+        generation: 0,
       }],
     });
   });
@@ -74,8 +78,15 @@ describe('migrations keep the pip', () => {
       v: 3, genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places,
     });
     expect(parseSave(v3)).toEqual({
-      pips: [{ genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places }],
+      pips: [{ genes: FOUNDER, trust: 0.73, needs: someNeeds, pos: somePos, disp: someDisp, places, generation: 0 }],
     });
+  });
+
+  it('v4 rosters gain generation zero', () => {
+    const v4 = JSON.stringify({ v: 4, pips: [somePip(), somePip()] });
+    const parsed = parseSave(v4);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips.map((p) => p.generation)).toEqual([0, 0]);
   });
 });
 
@@ -84,7 +95,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 5, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 6, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -99,6 +110,7 @@ describe('parseSave rejects broken saves', () => {
 
   it('roster problems: missing, empty, oversized, or one bad entry', () => {
     expect(parseSave(JSON.stringify({ v: 4 }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 5 }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toBeNull();
     const horde = Array.from({ length: MAX_SAVED_PIPS + 1 }, () => somePip());
     expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
@@ -111,6 +123,21 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 4, pips: [somePip(), { genes: FOUNDER, trust: 0.5 }] }))).toBeNull();
     // v4 entries carry positions always; a v4 pip without one is malformed, not migratable
     expect(parseSave(JSON.stringify({ v: 4, pips: [{ ...somePip(), pos: null }] }))).toBeNull();
+  });
+
+  it('v5 lineage problems: missing, wrong-typed, or non-finite generation', () => {
+    expect(parseSave(JSON.stringify({ v: 5, pips: [{ ...somePip(), generation: undefined }] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 5, pips: [{ ...somePip(), generation: 'seven' }] }))).toBeNull();
+    expect(parseSave('{"v":5,"pips":[' + JSON.stringify(somePip()).replace('"generation":3', '"generation":1e999') + ']}')).toBeNull();
+  });
+
+  it('v5 tampered generations clamp and floor', () => {
+    const low = parseSave(JSON.stringify({ v: 5, pips: [{ ...somePip(), generation: -5 }] }));
+    expect(low!.pips[0].generation).toBe(0);
+    const frac = parseSave(JSON.stringify({ v: 5, pips: [{ ...somePip(), generation: 6.9 }] }));
+    expect(frac!.pips[0].generation).toBe(6);
+    const vast = parseSave(JSON.stringify({ v: 5, pips: [{ ...somePip(), generation: 123456 }] }));
+    expect(vast!.pips[0].generation).toBe(9999);
   });
 
   it('non-finite numbers that sneak past JSON', () => {

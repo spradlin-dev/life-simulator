@@ -18,6 +18,7 @@ export interface LivePip {
   pos: { x: number; y: number };
   disp: Dispositions;
   places: readonly number[];
+  generation: number;
 }
 
 export interface PipSave {
@@ -27,6 +28,7 @@ export interface PipSave {
   pos: { x: number; y: number } | null;
   disp: Dispositions;
   places: number[];
+  generation: number;
 }
 
 export interface WorldSave {
@@ -34,13 +36,14 @@ export interface WorldSave {
 }
 
 const KEY = 'pip-save';
-// a hard population ceiling for the SAVE only — keeps a tampered file from
-// resurrecting a million pips; the game's own cap lives with mitosis
+// one ceiling for both the save file and the live population (main.ts gates
+// births on it): sharing the constant means the writer can never outgrow the
+// reader, and a tampered file can't resurrect a million pips
 export const MAX_SAVED_PIPS = 24;
 
 export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 4, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 5, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -92,7 +95,7 @@ function parseMemories(
 }
 
 // a complete modern pip entry (v4 roster entries carry every field)
-function parseFullPip(entry: unknown): PipSave | null {
+function parseFullPip(entry: unknown): Omit<PipSave, 'generation'> | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const d = entry as Record<string, unknown>;
   const core = parseCore(d);
@@ -116,14 +119,21 @@ export function parseSave(raw: string): WorldSave | null {
   if (typeof data !== 'object' || data === null) return null;
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
-  // roster); future versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 4) {
+  // roster, v4 the lineage); future versions must keep MIGRATING — a pip must
+  // never be lost
+  if (d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
       const pip = parseFullPip(entry);
       if (!pip) return null;
-      pips.push(pip);
+      let generation = 0;
+      if (d.v === 5) {
+        const g = (entry as Record<string, unknown>).generation;
+        if (typeof g !== 'number' || !Number.isFinite(g)) return null;
+        generation = Math.min(9999, Math.max(0, Math.floor(g)));
+      }
+      pips.push({ ...pip, generation });
     }
     return { pips };
   }
@@ -147,7 +157,7 @@ export function parseSave(raw: string): WorldSave | null {
     disp = mem.disp;
     places = mem.places;
   }
-  return { pips: [{ ...core, needs, pos, disp, places }] };
+  return { pips: [{ ...core, needs, pos, disp, places, generation: 0 }] };
 }
 
 export function loadSave(): WorldSave | null {

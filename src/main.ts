@@ -23,7 +23,8 @@ import {
   type Dispositions,
 } from './dispositions.ts';
 import { createInput } from './input.ts';
-import { clearSave, loadSave, storeSave, type LivePip } from './save.ts';
+import { clearSave, loadSave, MAX_SAVED_PIPS, storeSave, type LivePip } from './save.ts';
+import { splitChance, splitOutcome, SPLIT_COOLDOWN } from './mitosis.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -96,7 +97,8 @@ toastReload.addEventListener('click', () => void updateSW(true));
 // ------------------------------------------------------------------ treats
 
 const TREAT_LIFE = 60;
-const TREAT_CAP = 3;
+const TREAT_CAP = 10;
+const SPLIT_SWELL_S = 1.4;
 let treatArmed = false;
 
 const treatButton = document.getElementById('treat-button') as HTMLButtonElement;
@@ -170,6 +172,10 @@ interface Pip {
   needs: Needs;
   disp: Dispositions;
   places: number[];
+  generation: number;
+  grown: number;
+  splitFor: number;
+  sinceSplit: number;
   wanderTarget: Vec | null;
   pauseFor: number;
   blinkIn: number;
@@ -182,7 +188,7 @@ interface Pip {
   antenna: { x: number; y: number; vx: number; vy: number };
 }
 
-function makePip(genes: Genes, x: number, y: number): Pip {
+function makePip(genes: Genes, x: number, y: number, generation = 0): Pip {
   return {
     x,
     y,
@@ -196,6 +202,12 @@ function makePip(genes: Genes, x: number, y: number): Pip {
     needs: { ...FRESH_NEEDS },
     disp: { ...FRESH_DISPOSITIONS },
     places: freshPlaces(),
+    generation,
+    grown: 1,
+    splitFor: 0,
+    // scattered readiness at creation, so a fresh or reloaded flock never
+    // arrives synchronized (a newborn's 0 is set by divide)
+    sinceSplit: SPLIT_COOLDOWN * (0.35 + Math.random() * 0.65),
     wanderTarget: null,
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
@@ -216,8 +228,14 @@ function randomSpot(): Vec {
   };
 }
 
+function clampToWorld(x: number, y: number, margin = 26): Vec {
+  return {
+    x: Math.min(view.w - margin, Math.max(margin, x)),
+    y: Math.min(view.h - margin, Math.max(margin, y)),
+  };
+}
+
 const pips: Pip[] = [];
-let selected = 0;
 
 function snapshotWorld(): LivePip[] {
   return pips.map((pip) => ({
@@ -227,6 +245,7 @@ function snapshotWorld(): LivePip[] {
     pos: { x: pip.x, y: pip.y },
     disp: pip.disp,
     places: pip.places,
+    generation: pip.generation,
   }));
 }
 
@@ -239,13 +258,8 @@ if (params.has('reset')) clearSave();
 const saved = loadSave();
 if (saved) {
   for (const entry of saved.pips) {
-    const spot = entry.pos
-      ? {
-          x: Math.min(view.w - 26, Math.max(26, entry.pos.x)),
-          y: Math.min(view.h - 26, Math.max(26, entry.pos.y)),
-        }
-      : randomSpot();
-    const pip = makePip(entry.genes, spot.x, spot.y);
+    const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
+    const pip = makePip(entry.genes, spot.x, spot.y, entry.generation);
     pip.moods.trust = entry.trust;
     pip.needs = entry.needs;
     pip.disp = entry.disp;
@@ -257,7 +271,7 @@ if (saved) {
   storeSave(snapshotWorld());
 }
 
-// dev knob until mitosis: ?flock=N tops the roster up with fresh descendants
+// dev knob: ?flock=N tops the roster up with fresh descendants
 const flockWanted = Number(params.get('flock'));
 if (Number.isFinite(flockWanted) && flockWanted >= 2) {
   const cap = Math.min(12, Math.floor(flockWanted));
@@ -267,10 +281,49 @@ if (Number.isFinite(flockWanted) && flockWanted >= 2) {
   }
 }
 
+// dev knob: ?fecund=N multiplies the split rate for mutation review
+const fecund = Math.min(1000, Math.max(1, Number(params.get('fecund')) || 1));
+
+let selectedPip: Pip = pips[0];
+// bumped on any population change; roster AND census rebuild against it
+let flockVersion = 0;
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') storeSave(snapshotWorld());
 });
 window.addEventListener('pagehide', () => storeSave(snapshotWorld()));
+
+// one pip becomes two: the pure outcome from mitosis.ts, plus the fresh-start
+// rule — lifetime scars and place memories do NOT survive a division
+function divide(parent: Pip): Pip {
+  const [a, b] = splitOutcome({
+    genes: parent.genes,
+    needs: parent.needs,
+    generation: parent.generation,
+  });
+  const angle = Math.random() * Math.PI * 2;
+  const at = clampToWorld(parent.x + Math.cos(angle) * 20, parent.y + Math.sin(angle) * 20);
+  const kid = makePip(b.genes, at.x, at.y, b.generation);
+  kid.needs = b.needs;
+  // born unafraid; curiosity and the bond with the watcher carry over
+  kid.moods = { fear: 0, curiosity: parent.moods.curiosity, trust: parent.moods.trust };
+  kid.grown = 0.65;
+  kid.sinceSplit = 0;
+  kid.vx = parent.vx + Math.cos(angle) * 70;
+  kid.vy = parent.vy + Math.sin(angle) * 70;
+  parent.genes = a.genes;
+  parent.needs = a.needs;
+  parent.generation = a.generation;
+  parent.disp = { ...FRESH_DISPOSITIONS };
+  parent.places = freshPlaces();
+  parent.grown = 0.65;
+  parent.sinceSplit = 0;
+  parent.vx -= Math.cos(angle) * 70;
+  parent.vy -= Math.sin(angle) * 70;
+  showEmote(parent, '♥');
+  showEmote(kid, '♥');
+  return kid;
+}
 
 function distToPointerOf(pip: Pip): number {
   return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
@@ -466,8 +519,9 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
 
   pip.x += pip.vx * dt;
   pip.y += pip.vy * dt;
-  pip.x = Math.min(view.w - 26, Math.max(26, pip.x));
-  pip.y = Math.min(view.h - 26, Math.max(26, pip.y));
+  const held = clampToWorld(pip.x, pip.y);
+  pip.x = held.x;
+  pip.y = held.y;
 
   if (Math.abs(pip.vx) > 5) pip.facing = Math.sign(pip.vx);
 }
@@ -476,7 +530,7 @@ function updateAntenna(pip: Pip, dt: number, sulkFactor: number): void {
   const a = pip.antenna;
   const droop = sulkFactor * 14;
   a.vx += (pip.x - pip.facing * 4 - a.x) * 60 * dt;
-  a.vy += (pip.y - 42 + droop - a.y) * 60 * dt;
+  a.vy += (pip.y - 42 * pip.grown + droop - a.y) * 60 * dt;
   a.vx *= Math.max(0, 1 - 6 * dt);
   a.vy *= Math.max(0, 1 - 6 * dt);
   a.x += a.vx * dt;
@@ -503,6 +557,7 @@ function sulkOf(happiness: number): number {
 
 function updateTimers(pip: Pip, dt: number, sulkFactor: number): void {
   pip.emoteFor = Math.max(0, pip.emoteFor - dt);
+  pip.grown = Math.min(1, pip.grown + dt / 30);
   pip.blinkIn -= dt;
   if (pip.blinkIn < -0.12) pip.blinkIn = 1.5 + Math.random() * 4;
   if (pip.quirk) {
@@ -629,7 +684,13 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   const x = pip.x + jx + jiggle;
   const y = pip.y + jy + bob;
 
-  const R = 24;
+  // newborns are small and regrow; a dividing pip swells and shudders
+  let swell = 1;
+  if (pip.splitFor > 0) {
+    const p = 1 - pip.splitFor / SPLIT_SWELL_S;
+    swell = 1 + p * 0.18 + Math.sin(p * Math.PI * 8) * 0.06 * p;
+  }
+  const R = 24 * pip.grown * swell;
   const stretch = Math.min(0.22, speed / 900);
   const sx = (1 + stretch) * (1 - stretchPose * 0.35);
   const sy = (1 - stretch) * (asleep ? 1 + Math.sin(t * 2) * 0.04 : 1) * (1 + stretchPose);
@@ -683,7 +744,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
     }
   }
 
-  // eyes
+  // eyes — geometry deliberately ignores `grown`: newborns look big-eyed on purpose
   let lookX = 0;
   let lookY = 0;
   if (pointer.presence > 0) {
@@ -749,38 +810,101 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
 
 const roster = document.getElementById('roster') as HTMLDivElement;
 shieldFromWorld(roster);
-let rosterBuiltFor = -1;
+let rosterBuiltVersion = -1;
+
+function dotColor(g: Genes): string {
+  return `hsl(${g.hue}, ${g.sat}%, ${g.light}%)`;
+}
 
 function rebuildRoster(): void {
   roster.replaceChildren();
   pips.forEach((pip, i) => {
     const dot = document.createElement('button');
     dot.className = 'dot';
-    dot.style.background = `hsl(${pip.genes.hue}, ${pip.genes.sat}%, ${pip.genes.light}%)`;
+    dot.style.background = dotColor(pip.genes);
     dot.setAttribute('aria-label', `pip ${i + 1}`);
     dot.addEventListener('click', () => {
-      selected = i;
+      selectedPip = pip;
     });
     roster.append(dot);
   });
-  rosterBuiltFor = pips.length;
 }
 
 function updateRoster(): void {
-  if (rosterBuiltFor !== pips.length) rebuildRoster();
+  if (rosterBuiltVersion !== flockVersion) {
+    rebuildRoster();
+    rosterBuiltVersion = flockVersion;
+  }
   roster.hidden = pips.length < 2;
   for (const [i, dot] of [...roster.children].entries()) {
-    dot.classList.toggle('selected', i === selected);
+    dot.classList.toggle('selected', pips[i] === selectedPip);
+  }
+}
+
+// ------------------------------------------------------------------ census
+
+const census = document.getElementById('census') as HTMLDivElement;
+const censusButton = document.getElementById('census-button') as HTMLButtonElement;
+shieldFromWorld(census);
+shieldFromWorld(censusButton);
+let censusOpen = params.has('census');
+let censusBuiltVersion = -1;
+censusButton.addEventListener('click', () => {
+  censusOpen = !censusOpen;
+});
+
+function rebuildCensus(): void {
+  census.replaceChildren();
+  for (const pip of pips) {
+    const row = document.createElement('button');
+    row.className = 'census-row';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = dotColor(pip.genes);
+    const label = document.createElement('span');
+    row.append(dot, label);
+    row.addEventListener('click', () => {
+      selectedPip = pip;
+    });
+    census.append(row);
+  }
+}
+
+function updateCensus(): void {
+  census.hidden = !censusOpen;
+  censusButton.classList.toggle('active', censusOpen);
+  if (!censusOpen) return;
+  if (censusBuiltVersion !== flockVersion) {
+    rebuildCensus();
+    censusBuiltVersion = flockVersion;
+  }
+  for (const [i, row] of [...census.children].entries()) {
+    const pip = pips[i];
+    if (!pip) continue;
+    const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
+    (row.lastElementChild as HTMLElement).textContent =
+      `pip ${i + 1} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp)} · ${meter(happiness)}`;
+    row.classList.toggle('selected', pip === selectedPip);
   }
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'c' || e.key === 'C') {
+    censusOpen = !censusOpen;
+    return;
+  }
+  if ((e.key === 'f' || e.key === 'F') && pointer.presence > 0) {
+    dropTreat(pointer.x, pointer.y);
+    return;
+  }
   if (e.key !== 'Tab' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   // Tab keeps its focus-traversal job while the toast is up or there is no flock
   if (e.key === 'Tab' && (!toast.hidden || pips.length < 2)) return;
   e.preventDefault();
   const step = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
-  selected = (selected + step + pips.length) % pips.length;
+  const idx = Math.max(0, pips.indexOf(selectedPip));
+  selectedPip = pips[(idx + step + pips.length) % pips.length];
 });
 
 // ------------------------------------------------------------------ hud & loop
@@ -825,13 +949,11 @@ function meter(v: number): string {
 }
 
 function updateHud(): void {
-  const pip = pips[selected];
-  if (!pip) {
-    hud.textContent = '';
-    return;
-  }
+  const pip = selectedPip;
   const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
-  const who = pips.length > 1 ? `pip ${selected + 1}/${pips.length}` : 'pip';
+  const who = pips.length > 1
+    ? `pip ${pips.indexOf(pip) + 1}/${pips.length} · gen ${pip.generation}`
+    : 'pip';
   hud.textContent =
     `${who}: ${MOOD_LABELS[pip.state]}\n` +
     `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp)}\n` +
@@ -879,6 +1001,11 @@ function frame(now: number): void {
     }
   }
 
+  const born: Pip[] = [];
+  // in-flight swells are committed growth: counting them in the gate means the
+  // population can never overshoot the cap while divisions are mid-animation
+  let reserved = 0;
+  for (const p of pips) if (p.splitFor > 0) reserved++;
   for (const [i, pip] of pips.entries()) {
     const expressed = effectiveGenes(pip.genes, pip.disp);
     const senses = sensesFor(pip);
@@ -915,17 +1042,49 @@ function frame(now: number): void {
     act(pip, dt, t, expressed, sulkFactor);
     updateAntenna(pip, dt, sulkFactor);
     updateTimers(pip, dt, sulkFactor);
+
+    // mitosis: a hazard rate, not a timer — settled, well-lived pips sometimes
+    // just... double
+    pip.sinceSplit += dt;
+    const settled = pip.state !== 'flee' && pip.state !== 'cower' && pip.state !== 'sleep';
+    if (pip.splitFor > 0) {
+      if (!settled) {
+        pip.splitFor = 0; // a scare aborts the division
+        reserved--;
+      } else {
+        pip.splitFor -= dt;
+        if (pip.splitFor <= 0) {
+          born.push(divide(pip));
+          reserved--;
+        }
+      }
+    } else if (
+      settled &&
+      pips.length + born.length + reserved < MAX_SAVED_PIPS &&
+      Math.random() < splitChance(happiness, pip.sinceSplit, dt, fecund)
+    ) {
+      pip.splitFor = SPLIT_SWELL_S;
+      reserved++;
+    }
+  }
+
+  if (born.length) {
+    pips.push(...born);
+    flockVersion++;
+    sinceSave = 0;
+    storeSave(snapshotWorld());
   }
 
   ctx.clearRect(0, 0, view.w, view.h);
   drawTouchGhost();
   drawTreats(t);
-  for (const [i, pip] of pips.entries()) {
+  for (const pip of pips) {
     const sulkFactor = sulkOf(happinessOf(pip.needs, pip.moods.trust, pip.moods.fear));
-    drawPip(pip, t, i === selected && pips.length > 1, sulkFactor);
+    drawPip(pip, t, pip === selectedPip && pips.length > 1, sulkFactor);
   }
 
   updateRoster();
+  updateCensus();
   updateHud();
 
   if (pointer.presence > 0.9 && playedFor < 9) {
