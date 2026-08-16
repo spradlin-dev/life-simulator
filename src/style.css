@@ -30,18 +30,6 @@ body {
   transition: filter 0.4s ease;
 }
 
-#hud {
-  position: fixed;
-  top: 14px;
-  left: 16px;
-  color: #8fa3b8;
-  font-size: 12px;
-  line-height: 1.7;
-  white-space: pre;
-  pointer-events: none;
-  opacity: 0.85;
-}
-
 #hint {
   position: fixed;
   bottom: 22px;
@@ -135,7 +123,7 @@ body {
   gap: 4px;
   max-height: min(78vh, 640px);
   max-width: min(88vw, 420px);
-  overflow-y: auto;
+  overflow: auto;
   padding: 10px;
   background: rgba(16, 24, 33, 0.88);
   border: 1px solid #2a3947;
@@ -176,6 +164,11 @@ body {
 body.treat-armed #treat-button {
   border-color: #e05c6e;
   box-shadow: 0 0 10px rgba(224, 92, 110, 0.5);
+}
+
+body.raining #treat-button {
+  border-color: #7fce9a;
+  box-shadow: 0 0 14px rgba(127, 206, 154, 0.6);
 }
 
 body.treat-armed #world {

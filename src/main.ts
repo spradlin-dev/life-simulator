@@ -31,7 +31,6 @@ import { splitChance, splitOutcome, SPLIT_COOLDOWN } from './mitosis.ts';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-const hud = document.getElementById('hud') as HTMLDivElement;
 const hint = document.getElementById('hint') as HTMLDivElement;
 
 // logical viewport in CSS px; the canvas backing store is scaled to the device
@@ -156,7 +155,44 @@ let treatArmed = false;
 
 const treatButton = document.getElementById('treat-button') as HTMLButtonElement;
 shieldFromWorld(treatButton);
+
+// feeding at flock scale: hold F (desktop) to rain berries where you drag,
+// hold the berry button (touch) to rain them across the whole meadow.
+// a quick tap on the button still arms one precise berry
+const RAIN_EVERY = 0.08;
+let fRainHeld = false;
+let buttonRainHeld = false;
+let rainTimer = 0;
+let suppressArmClick = false;
+let holdTimer: number | null = null;
+
+treatButton.addEventListener('pointerdown', () => {
+  suppressArmClick = false;
+  holdTimer = window.setTimeout(() => {
+    buttonRainHeld = true;
+    suppressArmClick = true;
+    document.body.classList.add('raining');
+  }, 350);
+});
+function endButtonRain(): void {
+  if (holdTimer !== null) {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+  buttonRainHeld = false;
+  document.body.classList.remove('raining');
+}
+window.addEventListener('pointerup', endButtonRain);
+window.addEventListener('pointercancel', endButtonRain);
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'f' || e.key === 'F') fRainHeld = false;
+});
+
 treatButton.addEventListener('click', () => {
+  if (suppressArmClick) {
+    suppressArmClick = false;
+    return;
+  }
   if (treats.length >= TREAT_CAP) return;
   treatArmed = !treatArmed;
   document.body.classList.toggle('treat-armed', treatArmed);
@@ -434,6 +470,8 @@ window.addEventListener('pagehide', () => storeSave(snapshotWorld()));
 let paused = !document.hasFocus();
 window.addEventListener('blur', () => {
   paused = true;
+  fRainHeld = false;
+  endButtonRain();
   document.body.classList.add('paused');
   storeSave(snapshotWorld());
 });
@@ -1118,7 +1156,7 @@ function updateCensus(t: number): void {
     if (!pip) continue;
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
     (row.lastElementChild as HTMLElement).textContent =
-      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)}`;
+      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)} · ${MOOD_LABELS[pip.state]}`;
     row.classList.toggle('selected', pip === selectedPip);
   }
 }
@@ -1131,6 +1169,7 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.key === 'f' || e.key === 'F') && pointer.presence > 0) {
     dropTreat(wp.x, wp.y);
+    fRainHeld = true;
     return;
   }
   if (e.key !== 'Tab' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -1184,24 +1223,6 @@ function meter(v: number): string {
   return '▰'.repeat(n) + '▱'.repeat(8 - n);
 }
 
-function updateHud(): void {
-  const pip = selectedPip;
-  const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
-  const who = pips.length > 1
-    ? `${pip.name} · ${pips.indexOf(pip) + 1}/${pips.length} · gen ${pip.generation}`
-    : pip.name;
-  hud.textContent =
-    `${who}: ${MOOD_LABELS[pip.state]}\n` +
-    `nature    ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))}\n` +
-    `mood      ${meter(happiness)}\n` +
-    `trust     ${meter(pip.moods.trust)}\n` +
-    `fear      ${meter(pip.moods.fear)}\n` +
-    `curiosity ${meter(pip.moods.curiosity)}\n` +
-    `food      ${meter(pip.needs.food)}\n` +
-    `rest      ${meter(pip.needs.rest)}\n` +
-    `fun       ${meter(pip.needs.fun)}`;
-}
-
 let last = performance.now();
 let playedFor = 0;
 let sinceSave = 0;
@@ -1222,6 +1243,19 @@ function frame(now: number): void {
     wp.y = w.y;
   }
   updateTreats(dt);
+
+  if (fRainHeld || buttonRainHeld) {
+    rainTimer -= dt;
+    while (rainTimer <= 0) {
+      rainTimer += RAIN_EVERY;
+      if (fRainHeld && pointer.presence > 0) dropTreat(wp.x, wp.y);
+      else if (buttonRainHeld) {
+        dropTreat(30 + Math.random() * (world.w - 60), 30 + Math.random() * (world.h - 60));
+      }
+    }
+  } else {
+    rainTimer = 0;
+  }
 
   sinceSave += dt;
   if (sinceSave >= 10) {
@@ -1383,7 +1417,6 @@ function frame(now: number): void {
 
   updateRoster();
   updateCensus(t);
-  updateHud();
 
   if (pointer.presence > 0.9 && playedFor < 9) {
     playedFor += dt;
