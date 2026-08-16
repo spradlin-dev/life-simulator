@@ -42,7 +42,7 @@ const KEY = 'pip-save';
 // one ceiling for both the save file and the live population (main.ts gates
 // births on it): sharing the constant means the writer can never outgrow the
 // reader, and a tampered file can't resurrect a million pips
-export const MAX_SAVED_PIPS = 24;
+export const MAX_SAVED_PIPS = 300;
 
 export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject

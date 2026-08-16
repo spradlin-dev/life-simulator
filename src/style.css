@@ -219,3 +219,12 @@ body.paused #world {
   border-color: #dfe8f0;
   box-shadow: 0 0 6px rgba(223, 232, 240, 0.4);
 }
+
+#roster .count {
+  color: #8fa3b8;
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 1px solid #2a3947;
+  border-radius: 999px;
+  background: rgba(16, 24, 33, 0.7);
+}

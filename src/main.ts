@@ -338,7 +338,7 @@ if (saved) {
 // dev knob: ?flock=N tops the roster up with fresh descendants
 const flockWanted = Number(params.get('flock'));
 if (Number.isFinite(flockWanted) && flockWanted >= 2) {
-  const cap = Math.min(12, Math.floor(flockWanted));
+  const cap = Math.min(100, Math.floor(flockWanted));
   while (pips.length < cap) {
     const spot = randomSpot();
     pips.push(makePip(descend(FOUNDER, 6), spot.x, spot.y));
@@ -955,6 +955,8 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
 const roster = document.getElementById('roster') as HTMLDivElement;
 shieldFromWorld(roster);
 let rosterBuiltVersion = -1;
+// past this many pips, individual dots are confetti — show a count instead
+const ROSTER_DOT_LIMIT = 40;
 
 function dotColor(g: Genes): string {
   return `hsl(${g.hue}, ${g.sat}%, ${g.light}%)`;
@@ -962,6 +964,13 @@ function dotColor(g: Genes): string {
 
 function rebuildRoster(): void {
   roster.replaceChildren();
+  if (pips.length > ROSTER_DOT_LIMIT) {
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = `${pips.length} pips`;
+    roster.append(count);
+    return;
+  }
   for (const pip of pips) {
     const dot = document.createElement('button');
     dot.className = 'dot';
@@ -980,6 +989,7 @@ function updateRoster(): void {
     rosterBuiltVersion = flockVersion;
   }
   roster.hidden = pips.length < 2;
+  if (pips.length > ROSTER_DOT_LIMIT) return;
   for (const [i, dot] of [...roster.children].entries()) {
     dot.classList.toggle('selected', pips[i] === selectedPip);
   }
@@ -993,6 +1003,7 @@ shieldFromWorld(census);
 shieldFromWorld(censusButton);
 let censusOpen = params.has('census');
 let censusBuiltVersion = -1;
+let censusRefreshedAt = -1;
 censusButton.addEventListener('click', () => {
   censusOpen = !censusOpen;
 });
@@ -1014,14 +1025,18 @@ function rebuildCensus(): void {
   }
 }
 
-function updateCensus(): void {
+function updateCensus(t: number): void {
   census.hidden = !censusOpen;
   censusButton.classList.toggle('active', censusOpen);
   if (!censusOpen) return;
   if (censusBuiltVersion !== flockVersion) {
     rebuildCensus();
     censusBuiltVersion = flockVersion;
+    censusRefreshedAt = -1;
   }
+  // rewriting hundreds of rows every frame janks — a few refreshes a second reads the same
+  if (t - censusRefreshedAt < 0.25) return;
+  censusRefreshedAt = t;
   for (const [i, row] of [...census.children].entries()) {
     const pip = pips[i];
     if (!pip) continue;
@@ -1272,7 +1287,7 @@ function frame(now: number): void {
   }
 
   updateRoster();
-  updateCensus();
+  updateCensus(t);
   updateHud();
 
   if (pointer.presence > 0.9 && playedFor < 9) {
