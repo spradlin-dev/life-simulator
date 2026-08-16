@@ -274,3 +274,11 @@ export function mutateGenome(strand: string, rand: () => number = Math.random): 
   }
   return s;
 }
+
+// a strand several unseen generations away: flock seeding and wander-ins
+// drift the founder's strand the same way division does
+export function drift(strand: string, generations: number, rand: () => number = Math.random): string {
+  let s = strand;
+  for (let i = 0; i < generations; i++) s = mutateGenome(s, rand);
+  return s;
+}

@@ -1,7 +1,8 @@
 import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
-import { descend, FOUNDER, hueShift, type Genes } from './genes.ts';
+import { hueShift, type Genes } from './genes.ts';
+import { decode, drift, FOUNDER_STRAND } from './dna.ts';
 import {
   chooseState,
   knock,
@@ -285,6 +286,7 @@ interface Pip {
   state: CritterState;
   stateTime: number;
   genes: Genes;
+  strand: string;
   moods: Moods;
   needs: Needs;
   disp: Dispositions;
@@ -309,7 +311,7 @@ interface Pip {
   antenna: { x: number; y: number; vx: number; vy: number };
 }
 
-function makePip(genes: Genes, x: number, y: number, generation = 0, name = makeName()): Pip {
+function makePip(genes: Genes, strand: string, x: number, y: number, generation = 0, name = makeName()): Pip {
   return {
     x,
     y,
@@ -319,6 +321,7 @@ function makePip(genes: Genes, x: number, y: number, generation = 0, name = make
     state: 'wander',
     stateTime: 0,
     genes,
+    strand,
     moods: { fear: 0, curiosity: 0, trust: 0.5 },
     needs: { ...FRESH_NEEDS },
     disp: { ...FRESH_DISPOSITIONS },
@@ -351,6 +354,13 @@ function randomSpot(): Vec {
     x: 80 + Math.random() * Math.max(0, world.w - 160),
     y: 80 + Math.random() * Math.max(0, world.h - 160),
   };
+}
+
+// a pip several unseen generations from the founder: the strand drifts first
+// and the stats are read from it — the genome is the only heredity there is
+function wanderIn(x: number, y: number): Pip {
+  const strand = drift(FOUNDER_STRAND, 6);
+  return makePip(decode(strand), strand, x, y);
 }
 
 // the goodbye is a soft handful of pastel sparks, never a body
@@ -411,6 +421,7 @@ const pips: Pip[] = [];
 function snapshotWorld(): LivePip[] {
   return pips.map((pip) => ({
     genes: pip.genes,
+    strand: pip.strand,
     trust: pip.moods.trust,
     needs: pip.needs,
     pos: { x: pip.x, y: pip.y },
@@ -431,7 +442,7 @@ const saved = loadSave();
 if (saved) {
   for (const entry of saved.pips) {
     const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
-    const pip = makePip(entry.genes, spot.x, spot.y, entry.generation, entry.name);
+    const pip = makePip(entry.genes, entry.strand, spot.x, spot.y, entry.generation, entry.name);
     pip.moods.trust = entry.trust;
     pip.needs = entry.needs;
     pip.disp = entry.disp;
@@ -439,7 +450,7 @@ if (saved) {
     pips.push(pip);
   }
 } else {
-  pips.push(makePip(descend(FOUNDER, 6), world.w / 2, world.h / 2));
+  pips.push(wanderIn(world.w / 2, world.h / 2));
   storeSave(snapshotWorld());
 }
 
@@ -449,7 +460,7 @@ if (Number.isFinite(flockWanted) && flockWanted >= 2) {
   const cap = Math.min(100, Math.floor(flockWanted));
   while (pips.length < cap) {
     const spot = randomSpot();
-    const pip = makePip(descend(FOUNDER, 6), spot.x, spot.y);
+    const pip = wanderIn(spot.x, spot.y);
     // even minute one is unsynchronized: fresh flocks arrive mid-day, not factory-new
     pip.needs = {
       food: 0.82 + Math.random() * 0.18,
@@ -496,13 +507,13 @@ if (paused) document.body.classList.add('paused');
 // rule — lifetime scars and place memories do NOT survive a division
 function divide(parent: Pip): Pip {
   const [a, b] = splitOutcome({
-    genes: parent.genes,
+    strand: parent.strand,
     needs: parent.needs,
     generation: parent.generation,
   });
   const angle = Math.random() * Math.PI * 2;
   const at = clampToWorld(parent.x + Math.cos(angle) * 20, parent.y + Math.sin(angle) * 20);
-  const kid = makePip(b.genes, at.x, at.y, b.generation);
+  const kid = makePip(b.genes, b.strand, at.x, at.y, b.generation);
   kid.needs = b.needs;
   // born unafraid; curiosity and the bond with the watcher carry over
   kid.moods = { fear: 0, curiosity: parent.moods.curiosity, trust: parent.moods.trust };
@@ -511,6 +522,7 @@ function divide(parent: Pip): Pip {
   kid.vx = parent.vx + Math.cos(angle) * 70;
   kid.vy = parent.vy + Math.sin(angle) * 70;
   parent.genes = a.genes;
+  parent.strand = a.strand;
   parent.needs = a.needs;
   parent.generation = a.generation;
   parent.disp = { ...FRESH_DISPOSITIONS };
@@ -1389,7 +1401,7 @@ function frame(now: number): void {
     // the meadow never stays empty: a new little one wanders in
     if (pips.length === 0) {
       const spot = randomSpot();
-      const arrival = makePip(descend(FOUNDER, 6), spot.x, spot.y);
+      const arrival = wanderIn(spot.x, spot.y);
       showEmote(arrival, '✧');
       pips.push(arrival);
     }

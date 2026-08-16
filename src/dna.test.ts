@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DECODER_VERSION,
   decode,
+  drift,
   encode,
   FOUNDER_STRAND,
   isValidStrand,
@@ -251,5 +252,18 @@ describe('isValidStrand', () => {
     expect(isValidStrand('ACGU'.repeat(30))).toBe(false);
     expect(isValidStrand('A'.repeat(STRAND_MAX + 1))).toBe(false);
     expect(isValidStrand(42)).toBe(false);
+  });
+});
+
+describe('drift', () => {
+  it('zero generations is the same strand', () => {
+    expect(drift(FOUNDER_STRAND, 0)).toBe(FOUNDER_STRAND);
+  });
+
+  it('generations accumulate mutation, deterministically under a seed', () => {
+    const a = drift(FOUNDER_STRAND, 6, lcg(9));
+    expect(a).toBe(drift(FOUNDER_STRAND, 6, lcg(9)));
+    expect(isValidStrand(a)).toBe(true);
+    expect(a).not.toBe(FOUNDER_STRAND);
   });
 });

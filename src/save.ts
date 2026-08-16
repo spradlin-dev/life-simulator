@@ -1,5 +1,6 @@
 import { clamp01 } from './math.ts';
 import { GENE_FIELDS, sanitizeGenes, type Genes } from './genes.ts';
+import { DECODER_VERSION, encode, isValidStrand } from './dna.ts';
 import { makeName, sanitizeName } from './names.ts';
 import { FRESH_NEEDS, NEED_FIELDS, type Needs } from './needs.ts';
 import {
@@ -14,6 +15,7 @@ import {
 // one pip, as the running game hands it to the save layer
 export interface LivePip {
   genes: Genes;
+  strand: string;
   trust: number;
   needs: Needs;
   pos: { x: number; y: number };
@@ -25,6 +27,7 @@ export interface LivePip {
 
 export interface PipSave {
   genes: Genes;
+  strand: string;
   trust: number;
   needs: Needs;
   pos: { x: number; y: number } | null;
@@ -46,7 +49,7 @@ export const MAX_SAVED_PIPS = 300;
 
 export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 7, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 8, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -114,7 +117,7 @@ function parseMemories(
 function parseFullPip(
   entry: unknown,
   fillLegacyGenes: boolean,
-): Omit<PipSave, 'generation' | 'name'> | null {
+): Omit<PipSave, 'generation' | 'name' | 'strand'> | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const d = entry as Record<string, unknown>;
   const core = parseCore(d, fillLegacyGenes);
@@ -138,13 +141,13 @@ export function parseSave(raw: string): WorldSave | null {
   if (typeof data !== 'object' || data === null) return null;
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
-  // roster, v4 the lineage, v5 names and looks, v6 the tempo genes); future
-  // versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
+  // genome); future versions must keep MIGRATING — a pip must never be lost
+  if (d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
-      const pip = parseFullPip(entry, d.v !== 7);
+      const pip = parseFullPip(entry, d.v < 7);
       if (!pip) return null;
       let generation = 0;
       if (d.v !== 4) {
@@ -154,7 +157,14 @@ export function parseSave(raw: string): WorldSave | null {
       }
       // names are cosmetic: older saves and mangled entries get a fresh one
       const name = d.v >= 6 ? sanitizeName((entry as Record<string, unknown>).name) : makeName();
-      pips.push({ ...pip, generation, name });
+      // a healthy same-decoder strand is kept verbatim (it carries junk DNA and
+      // lineage structure no re-encode could recover); anything else — older
+      // saves, mangled strands, foreign decoder versions — is respelled from
+      // the cached stats, so the pip itself never changes and is never lost
+      const raw = (entry as Record<string, unknown>).strand;
+      const strand =
+        d.v === 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
+      pips.push({ ...pip, strand, generation, name });
     }
     return { pips };
   }
@@ -178,7 +188,11 @@ export function parseSave(raw: string): WorldSave | null {
     disp = mem.disp;
     places = mem.places;
   }
-  return { pips: [{ ...core, needs, pos, disp, places, generation: 0, name: makeName() }] };
+  return {
+    pips: [
+      { ...core, strand: encode(core.genes), needs, pos, disp, places, generation: 0, name: makeName() },
+    ],
+  };
 }
 
 export function loadSave(): WorldSave | null {

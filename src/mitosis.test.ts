@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN, SPLIT_MAX_RATE } from './mitosis.ts';
 import { FOUNDER, GENE_FIELDS } from './genes.ts';
+import { decode, FOUNDER_STRAND, isValidStrand } from './dna.ts';
+
+// deterministic 32-bit LCG; Math.imul keeps every step exact
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
 
 const core = {
   genes: FOUNDER,
+  // junk-extended so inheritance is observable: a daughter spelled from the
+  // parent keeps this length, one wrongly spelled from the founder cannot
+  strand: FOUNDER_STRAND + 'AAAA',
   needs: { food: 0.8, rest: 0.6, fun: 0.9 },
   generation: 2,
 };
@@ -66,13 +79,23 @@ describe('splitOutcome', () => {
     expect(b.generation).toBe(3);
   });
 
-  it('drifts each genome independently', () => {
-    const [a, b] = splitOutcome(core);
-    // FOUNDER sits mid-range, so no trait clamps: byte-identical genomes after
-    // two independent Gaussian drifts would need every draw to round to zero
-    expect(a.genes).not.toEqual(core.genes);
-    expect(b.genes).not.toEqual(core.genes);
-    expect(a.genes).not.toEqual(b.genes);
+  it('drifts each strand independently', () => {
+    // a live division can legitimately copy a strand untouched (~8% per
+    // daughter), so independence is pinned under a seed that mutates both
+    const [a, b] = splitOutcome(core, lcg(3));
+    expect(a.strand).not.toBe(core.strand);
+    expect(b.strand).not.toBe(core.strand);
+    expect(a.strand).not.toBe(b.strand);
+    expect(a.strand.length).toBe(core.strand.length);
+    expect(b.strand.length).toBe(core.strand.length);
+  });
+
+  it('each daughter is exactly the decode of her own strand', () => {
+    const [a, b] = splitOutcome(core, lcg(3));
+    expect(a.genes).toEqual(decode(a.strand));
+    expect(b.genes).toEqual(decode(b.strand));
+    expect(isValidStrand(a.strand)).toBe(true);
+    expect(isValidStrand(b.strand)).toBe(true);
   });
 
   it('keeps every gene inside its legal range', () => {

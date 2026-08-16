@@ -1,4 +1,4 @@
-import { clamp01, gaussian } from './math.ts';
+import { clamp01 } from './math.ts';
 
 export interface Genes {
   boldness: number;
@@ -87,11 +87,6 @@ export const FOUNDER: Genes = {
   playfulness: 0.5,
 };
 
-const TRAIT_SIGMA = 0.06;
-const HUE_SIGMA = 10;
-const SAT_SIGMA = 4;
-const LIGHT_SIGMA = 3;
-
 const clampRange = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 // the saturation and lightness a pip may wear, chosen for readability on the
@@ -122,23 +117,6 @@ export function sanitizeGenes(g: Genes): Genes {
     playfulness: clamp01(g.playfulness),
   };
   return clean;
-}
-
-// one generation of drift: usually barely noticeable, extremes asymptotically rare
-export function mutate(genes: Genes, rand: () => number = Math.random): Genes {
-  const drifted: Genes = { ...genes };
-  for (const field of DIAL_FIELDS) drifted[field] = genes[field] + gaussian(rand) * TRAIT_SIGMA;
-  drifted.hue = genes.hue + gaussian(rand) * HUE_SIGMA;
-  drifted.sat = genes.sat + gaussian(rand) * SAT_SIGMA;
-  drifted.light = genes.light + gaussian(rand) * LIGHT_SIGMA;
-  return sanitizeGenes(drifted);
-}
-
-// a pip that walked in from an unseen short lineage
-export function descend(genes: Genes, generations: number, rand: () => number = Math.random): Genes {
-  let g = { ...genes };
-  for (let i = 0; i < generations; i++) g = mutate(g, rand);
-  return g;
 }
 
 // shortest-arc hue interpolation (a hue wheel has no far side)

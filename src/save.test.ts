@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_SAVED_PIPS, parseSave, serialize, type LivePip } from './save.ts';
 import { FOUNDER } from './genes.ts';
+import { DECODER_VERSION, FOUNDER_STRAND } from './dna.ts';
 import { FRESH_NEEDS } from './needs.ts';
 import { FRESH_DISPOSITIONS, freshPlaces, PLACE_CELLS } from './dispositions.ts';
 
@@ -17,6 +18,7 @@ const somePlaces = (): number[] => {
 function somePip(overrides: Partial<LivePip> = {}): LivePip {
   return {
     genes: FOUNDER,
+    strand: FOUNDER_STRAND,
     trust: 0.73,
     needs: someNeeds,
     pos: somePos,
@@ -26,6 +28,12 @@ function somePip(overrides: Partial<LivePip> = {}): LivePip {
     name: 'Tester',
     ...overrides,
   };
+}
+
+// a v7 entry: everything a modern pip has except the strand
+function v7Pip(): Omit<LivePip, 'strand'> {
+  const { strand: _s, ...rest } = somePip();
+  return rest;
 }
 
 // a genome as saves wrote it before the visual traits existed
@@ -112,11 +120,11 @@ describe('migrations keep the pip', () => {
   });
 
   it('v7 keeps names, salvages mangled ones, and demands complete genomes', () => {
-    const kept = parseSave(JSON.stringify({ v: 7, pips: [somePip()] }));
+    const kept = parseSave(JSON.stringify({ v: 7, pips: [v7Pip()] }));
     expect(kept!.pips[0].name).toBe('Tester');
-    const mangled = parseSave(JSON.stringify({ v: 7, pips: [{ ...somePip(), name: 1234 }] }));
+    const mangled = parseSave(JSON.stringify({ v: 7, pips: [{ ...v7Pip(), name: 1234 }] }));
     expect(mangled!.pips[0].name).toMatch(NAME_SHAPE);
-    expect(parseSave(JSON.stringify({ v: 7, pips: [{ ...somePip(), genes: OLD_GENES }] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 7, pips: [{ ...v7Pip(), genes: OLD_GENES }] }))).toBeNull();
   });
 
   it('v6 genomes gain the tempo genes at their midpoints, names intact', () => {
@@ -136,7 +144,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 8, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 9, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -245,5 +253,46 @@ describe('place cell count contract', () => {
     const long = [...freshPlaces(), 0];
     expect(long).toHaveLength(PLACE_CELLS + 1);
     expect(parseSave(JSON.stringify({ v: 3, genes: FOUNDER, trust: 0.5, needs: someNeeds, pos: somePos, disp: someDisp, places: long }))).toBeNull();
+  });
+});
+
+describe('the genome rides the save', () => {
+  const DECODER = DECODER_VERSION;
+
+  it('a healthy same-decoder strand is kept verbatim, junk DNA and all', () => {
+    const grown = FOUNDER_STRAND + 'AAAA';
+    const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [somePip({ strand: grown })] }));
+    expect(parsed!.pips[0].strand).toBe(grown);
+  });
+
+  it('v7 pips grow a strand spelled from their stats, stats untouched', () => {
+    const parsed = parseSave(JSON.stringify({ v: 7, pips: [v7Pip()] }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+  });
+
+  it('rollback insurance: stats alone reconstruct a working pip', () => {
+    const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [v7Pip()] }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+  });
+
+  it('a mangled strand is respelled from the stats, never fatal', () => {
+    for (const bad of ['ACGU'.repeat(30), 'ACGT', 42, null]) {
+      const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [somePip({ strand: bad as unknown as string })] }));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+      expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+    }
+  });
+
+  it('a foreign decoder version respells every strand from the stats', () => {
+    const grown = FOUNDER_STRAND + 'AAAA';
+    const parsed = parseSave(JSON.stringify({ v: 8, decoder: 999, pips: [somePip({ strand: grown })] }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
   });
 });
