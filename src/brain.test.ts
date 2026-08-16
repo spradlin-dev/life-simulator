@@ -251,6 +251,51 @@ describe('chooseState', () => {
     expect(chooseState('wander', calm, { ...fed, food: 0.3 }, plain, s).state).toBe('snack');
   });
 
+  it('a starving pip is too desperate to sleep, however tired', () => {
+    const alone = senses({ presence: 0, stillFor: 100 });
+    const d = chooseState('wander', calm, { food: 0, rest: 0.05, fun: 0.5 }, plain, alone);
+    expect(d.state).not.toBe('sleep');
+  });
+
+  it('until the body gives out: a starving pip passes out at empty', () => {
+    const d = chooseState('wander', calm, { food: 0, rest: 0, fun: 0.5 }, plain, senses());
+    expect(d.state).toBe('sleep');
+  });
+
+  it('a berry laid beside a passed-out pip rouses it to nibble', () => {
+    const close = chooseState('sleep', calm, { food: 0, rest: 0.05, fun: 0.5 }, plain, senses({ treatDist: 80 }));
+    expect(close.state).toBe('snack');
+    const far = chooseState('sleep', calm, { food: 0, rest: 0.05, fun: 0.5 }, plain, senses({ treatDist: 400, presence: 0 }));
+    expect(far.state).toBe('sleep');
+  });
+
+  it('hunger pangs wake a sleeper who still has the strength', () => {
+    const strong = chooseState('sleep', calm, { food: 0, rest: 0.6, fun: 0.5 }, plain, senses({ presence: 0 }));
+    expect(strong.state).toBe('wander');
+    const atLine = chooseState('sleep', calm, { food: 0, rest: 0.4, fun: 0.5 }, plain, senses({ presence: 0 }));
+    expect(atLine.state).toBe('wander');
+    const justUnder = chooseState('sleep', calm, { food: 0, rest: 0.39, fun: 0.5 }, plain, senses({ presence: 0 }));
+    expect(justUnder.state).toBe('sleep');
+    // below the strength line the collapse holds — no flickering back up
+    const spent = chooseState('sleep', calm, { food: 0, rest: 0.3, fun: 0.5 }, plain, senses({ presence: 0 }));
+    expect(spent.state).toBe('sleep');
+  });
+
+  it('a hovering rescuer cannot startle a collapsed pip awake', () => {
+    const d = chooseState('sleep', calm, { food: 0, rest: 0.2, fun: 0.5 }, plain, senses({ presence: 1, dist: 100 }));
+    expect(d.state).toBe('sleep');
+    expect(d.startled).toBe(false);
+  });
+
+  it('collapse waits for the bite: a nibbling pip at zero rest keeps eating', () => {
+    const d = chooseState('snack', calm, { food: 0, rest: 0, fun: 0.5 }, plain, senses({ treatDist: 50 }));
+    expect(d.state).toBe('snack');
+  });
+
+  it('a fed pip still naps exactly as before', () => {
+    expect(chooseState('wander', calm, { food: 0.5, rest: 0.1, fun: 0.5 }, plain, senses()).state).toBe('sleep');
+  });
+
   it('a full pip ignores treats', () => {
     const s = senses({ treatDist: 200 });
     expect(chooseState('wander', calm, fed, plain, s).state).toBe('wander');

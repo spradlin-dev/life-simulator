@@ -49,15 +49,23 @@ export function tickNeeds(
   const weariness = lerp(1.4, 0.6, genes.stamina);
   const boredom = lerp(0.6, 1.4, genes.playfulness);
   const delight = lerp(0.75, 1.25, genes.playfulness);
+  // the cascade: a worn body plays half-heartedly, a brimming one overflows
+  // (neutral at rest 0.5); an empty belly wears the body down faster, but
+  // only once food actually runs low — above 0.35 nothing changes
+  const verve = lerp(0.5, 1.5, needs.rest);
+  const famished = lerp(1.75, 1, clamp01(needs.food / 0.35));
   return {
     food: clamp01(needs.food - (dt / FOOD_DRAIN_S) * appetite * famine),
-    rest: clamp01(asleep ? needs.rest + dt / 45 : needs.rest - (dt / 300) * (1 + speed / 300) * weariness),
-    fun: clamp01(needs.fun + (engaged ? (dt / 25) * delight : -(dt / 360) * boredom)),
+    rest: clamp01(
+      asleep ? needs.rest + dt / 45 : needs.rest - (dt / 300) * (1 + speed / 300) * weariness * famished,
+    ),
+    fun: clamp01(needs.fun + (engaged ? (dt / 25) * delight * verve : -(dt / 360) * boredom)),
   };
 }
 
 export function eat(needs: Needs): Needs {
-  return { ...needs, food: clamp01(needs.food + 0.4) };
+  // a snack also perks the body a little — enough to rouse a collapsed pip
+  return { ...needs, food: clamp01(needs.food + 0.4), rest: clamp01(needs.rest + 0.05) };
 }
 
 // happiness is derived, never stored: met needs, amplified by trust, crushed by fear

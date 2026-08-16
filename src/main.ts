@@ -1252,8 +1252,16 @@ function updateCensus(t: number): void {
     const pip = pips[i - 1]; // child 0 is the dna panel; rows follow
     if (!pip) continue;
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);
+    // starvation reads as an emergency whatever the body is doing, except
+    // mid-bite, when the rescue is already underway
+    const stateLabel =
+      pip.needs.food > 0 || pip.state === 'snack'
+        ? MOOD_LABELS[pip.state]
+        : pip.state === 'sleep'
+          ? 'passed out — needs a berry'
+          : 'famished — needs a berry';
     (row.lastElementChild as HTMLElement).textContent =
-      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)} · ${MOOD_LABELS[pip.state]}`;
+      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)} · ${stateLabel}`;
     row.classList.toggle('selected', pip === selectedPip);
   }
 }

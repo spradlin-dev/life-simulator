@@ -130,17 +130,33 @@ export function chooseState(
   if (moods.fear > cowersAt) return decide('cower');
   if (moods.fear > fleesAt) return decide('flee');
 
+  const starving = needs.food <= 0;
   if (current === 'sleep') {
-    // exhausted sleep is deep sleep: proximity can't break it (a real scare still
-    // does — the fear checks above outrank sleep entirely)
-    const disturbed = needs.rest >= 0.15 && presence > 0.6 && (dist < 160 || speed > 450);
+    // a berry laid right beside a passed-out starving pip rouses it to
+    // nibble — collapse must never leave a pip beyond rescue
+    if (starving && treatDist < 120) return decide('snack');
+    // hunger pangs wake a sleeper with real strength left; a collapsed body
+    // stays down until it has clawed some back, so the end-game reads as slow
+    // stagger-and-fall, not flicker
+    if (starving && needs.rest >= 0.4) return decide('wander');
+    // exhausted sleep is deep sleep: proximity can't break it (a real scare
+    // still does — the fear checks above outrank sleep entirely). A collapsed
+    // starving pip can't be nudged awake at all: a rescuer hovering close
+    // must never startle-flicker the pip they are trying to save
+    const disturbed =
+      !starving && needs.rest >= 0.15 && presence > 0.6 && (dist < 160 || speed > 450);
     if (disturbed) return decide('wander', startle(moods, genes, dist, 0.4), true);
     // rested pips only get up if something is happening; an alone pip sleeps on
     if (needs.rest > 0.95 && stillFor <= sleepsAfter) return decide('wander');
     return decide('sleep');
   }
-  if (needs.rest < 0.15) return decide('sleep');
-  if (stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
+  // a starving pip cannot settle into sleep, however tired — it stays
+  // desperately awake until the body simply gives out. Mid-bite the collapse
+  // waits: interrupting the chew would reset it every tick and deadlock the
+  // rescue at zero rest
+  if (needs.rest <= 0 && current !== 'snack') return decide('sleep');
+  if (!starving && needs.rest < 0.15) return decide('sleep');
+  if (!starving && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
 
   // hunger sharpens the nose: the notice range starts at today's 480 and
   // stretches as the belly empties

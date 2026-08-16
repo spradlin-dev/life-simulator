@@ -55,8 +55,26 @@ describe('tickNeeds', () => {
     expect(after.food).toBeCloseTo(1 - 1 / 480, 10);
     expect(after.rest).toBeCloseTo(1 - 1 / 300, 10);
     expect(after.fun).toBeCloseTo(0.7 - 1 / 360, 10);
-    const engaged = tickNeeds({ ...FRESH_NEEDS, fun: 0.5 }, 'follow', 0, 1, FOUNDER);
+    // mid rest keeps the cascade's verve factor neutral, so this pin still
+    // means "midpoint reproduces the original refill"
+    const engaged = tickNeeds({ ...FRESH_NEEDS, rest: 0.5, fun: 0.5 }, 'follow', 0, 1, FOUNDER);
     expect(engaged.fun).toBeCloseTo(0.5 + 1 / 25, 10);
+  });
+
+  it('the cascade: rest sets how richly play refills', () => {
+    const refill = (rest: number) =>
+      tickNeeds({ food: 1, rest, fun: 0.5 }, 'follow', 0, 1, FOUNDER).fun - 0.5;
+    expect(refill(0.5)).toBeCloseTo(1 / 25, 10);
+    expect(refill(1)).toBeCloseTo(1.5 / 25, 10);
+    expect(refill(0)).toBeCloseTo(0.5 / 25, 10);
+  });
+
+  it('the cascade: hunger wears the body down faster, but only real hunger', () => {
+    const drained = (food: number) =>
+      1 - tickNeeds({ food, rest: 1, fun: 0.7 }, 'wander', 0, 1, FOUNDER).rest;
+    expect(drained(1)).toBeCloseTo(1 / 300, 10);
+    expect(drained(0.35)).toBeCloseTo(1 / 300, 10);
+    expect(drained(0)).toBeCloseTo(1.75 / 300, 10);
   });
 
   it('famine multiplies belly drain exactly and touches nothing else', () => {
@@ -95,6 +113,12 @@ describe('eat', () => {
   it('tops food up, capped at full', () => {
     expect(eat({ ...FRESH_NEEDS, food: 0.3 }).food).toBeCloseTo(0.7);
     expect(eat(FRESH_NEEDS).food).toBe(1);
+  });
+
+  it('perks the body a little, capped at full', () => {
+    const after = eat({ food: 0.2, rest: 0.3, fun: 0.5 });
+    expect(after.rest).toBeCloseTo(0.35);
+    expect(eat(FRESH_NEEDS).rest).toBe(1);
   });
 });
 
