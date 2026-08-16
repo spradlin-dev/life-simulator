@@ -212,12 +212,40 @@ function dropTreat(x: number, y: number): void {
   document.body.classList.remove('treat-armed');
 }
 
+// rain only where the camera looks: the frame already holds every pip, and a
+// berry outside it would only expire unseen
+function dropTreatInView(): void {
+  const { halfW, halfH } = visibleHalfExtent();
+  dropTreat(camera.x - halfW + Math.random() * halfW * 2, camera.y - halfH + Math.random() * halfH * 2);
+}
+
+// ------------------------------------------------------- the feeder lock
+// past this flock size the lock appears: holding the berry button forever is
+// chore, not care
+const FEED_LOCK_AT = 300;
+// the locked drip IS the soft population cap: each pip needs ~0.31 berries a
+// minute, so one berry every third of a second settles the colony near six
+// hundred — the carrying capacity rises and falls with this one number
+const FEED_EVERY = 1 / 3;
+let feederLocked = false;
+let feedTimer = 0;
+const feederLockButton = document.getElementById('feeder-lock') as HTMLButtonElement;
+shieldFromWorld(feederLockButton);
+feederLockButton.addEventListener('click', () => {
+  feederLocked = !feederLocked;
+  saveWorld();
+});
+
 function updateTreats(dt: number): void {
   for (let i = treats.length - 1; i >= 0; i--) {
     treats[i].age += dt;
     if (treats[i].age > TREAT_LIFE) treats.splice(i, 1);
   }
   treatButton.disabled = treats.length >= TREAT_CAP;
+  feederLockButton.hidden = pips.length < FEED_LOCK_AT && !feederLocked;
+  const glyph = feederLocked ? '🔒' : '🔓';
+  if (feederLockButton.textContent !== glyph) feederLockButton.textContent = glyph;
+  feederLockButton.classList.toggle('active', feederLocked);
 }
 
 // the family portrait rule: frame every pip with breathing room, zoom clamped
@@ -424,6 +452,10 @@ function clampToWorld(x: number, y: number, margin = 26): Vec {
 
 const pips: Pip[] = [];
 
+function saveWorld(): void {
+  storeSave(snapshotWorld(), feederLocked);
+}
+
 function snapshotWorld(): LivePip[] {
   return pips.map((pip) => ({
     genes: pip.genes,
@@ -446,6 +478,7 @@ if (params.has('reset')) clearSave();
 // the same pips, and how far you got with them, survive the refresh
 const saved = loadSave();
 if (saved) {
+  feederLocked = saved.lock;
   for (const entry of saved.pips) {
     const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
     const pip = makePip(entry.genes, entry.strand, spot.x, spot.y, entry.generation, entry.name);
@@ -457,7 +490,7 @@ if (saved) {
   }
 } else {
   pips.push(wanderIn(world.w / 2, world.h / 2));
-  storeSave(snapshotWorld());
+  saveWorld();
 }
 
 // dev knob: ?flock=N tops the roster up with fresh descendants
@@ -489,9 +522,9 @@ let selectedPip: Pip = pips[0];
 let flockVersion = 0;
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') storeSave(snapshotWorld());
+  if (document.visibilityState === 'hidden') saveWorld();
 });
-window.addEventListener('pagehide', () => storeSave(snapshotWorld()));
+window.addEventListener('pagehide', () => saveWorld());
 
 // the world holds its breath while you work elsewhere: an unfocused window
 // freezes sim time entirely, so stepping away never costs a pip anything
@@ -501,7 +534,7 @@ window.addEventListener('blur', () => {
   fRainHeld = false;
   endButtonRain();
   document.body.classList.add('paused');
-  storeSave(snapshotWorld());
+  saveWorld();
 });
 window.addEventListener('focus', () => {
   paused = false;
@@ -1354,21 +1387,26 @@ function frame(now: number): void {
     while (rainTimer <= 0) {
       rainTimer += RAIN_EVERY;
       if (fRainHeld && pointer.presence > 0) dropTreat(wp.x, wp.y);
-      else if (buttonRainHeld) {
-        // rain only where the camera looks: the frame already holds every
-        // pip, and a berry outside it would only expire unseen
-        const { halfW, halfH } = visibleHalfExtent();
-        dropTreat(camera.x - halfW + Math.random() * halfW * 2, camera.y - halfH + Math.random() * halfH * 2);
-      }
+      else if (buttonRainHeld) dropTreatInView();
     }
   } else {
     rainTimer = 0;
   }
 
+  if (feederLocked) {
+    feedTimer -= dt;
+    while (feedTimer <= 0) {
+      feedTimer += FEED_EVERY;
+      dropTreatInView();
+    }
+  } else {
+    feedTimer = 0;
+  }
+
   sinceSave += dt;
   if (sinceSave >= 10) {
     sinceSave = 0;
-    storeSave(snapshotWorld());
+    saveWorld();
   }
 
   const knocks = input.takeKnocks();
@@ -1491,14 +1529,14 @@ function frame(now: number): void {
     if (!pips.includes(selectedPip)) selectedPip = pips[0];
     flockVersion++;
     sinceSave = 0;
-    storeSave(snapshotWorld());
+    saveWorld();
   }
 
   if (born.length) {
     pips.push(...born);
     flockVersion++;
     sinceSave = 0;
-    storeSave(snapshotWorld());
+    saveWorld();
   }
 
   updateCamera(dt);

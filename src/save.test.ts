@@ -53,7 +53,8 @@ describe('save round-trip', () => {
       places: freshPlaces(),
       generation: 0,
     });
-    expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b] });
+    expect(parseSave(serialize([a, b], false))).toEqual({ pips: [a, b], lock: false });
+    expect(parseSave(serialize([a], true))!.lock).toBe(true);
   });
 });
 
@@ -144,7 +145,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 9, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 10, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -165,7 +166,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 4, pips: Array.from({ length: MAX_SAVED_PIPS }, () => somePip()) }))).not.toBeNull();
     // the writer clamps, so a serialize round-trip survives any population
-    const overgrown = parseSave(serialize(Array.from({ length: MAX_SAVED_PIPS + 3 }, () => somePip())));
+    const overgrown = parseSave(serialize(Array.from({ length: MAX_SAVED_PIPS + 3 }, () => somePip()), false));
     expect(overgrown).not.toBeNull();
     expect(overgrown!.pips).toHaveLength(MAX_SAVED_PIPS);
     // one rotten entry spoils the save — a partial roster would silently lose pips
@@ -261,7 +262,7 @@ describe('the genome rides the save', () => {
 
   it('a healthy same-decoder strand is kept verbatim, junk DNA and all', () => {
     const grown = FOUNDER_STRAND + 'AAAA';
-    const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [somePip({ strand: grown })] }));
+    const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip({ strand: grown })] }));
     expect(parsed!.pips[0].strand).toBe(grown);
   });
 
@@ -273,7 +274,7 @@ describe('the genome rides the save', () => {
   });
 
   it('rollback insurance: stats alone reconstruct a working pip', () => {
-    const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [v7Pip()] }));
+    const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [v7Pip()] }));
     expect(parsed).not.toBeNull();
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
     expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
@@ -281,7 +282,7 @@ describe('the genome rides the save', () => {
 
   it('a mangled strand is respelled from the stats, never fatal', () => {
     for (const bad of ['ACGU'.repeat(30), 'ACGT', 42, null]) {
-      const parsed = parseSave(JSON.stringify({ v: 8, decoder: DECODER, pips: [somePip({ strand: bad as unknown as string })] }));
+      const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip({ strand: bad as unknown as string })] }));
       expect(parsed).not.toBeNull();
       expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
       expect(parsed!.pips[0].genes).toEqual(FOUNDER);
@@ -290,9 +291,21 @@ describe('the genome rides the save', () => {
 
   it('a foreign decoder version respells every strand from the stats', () => {
     const grown = FOUNDER_STRAND + 'AAAA';
-    const parsed = parseSave(JSON.stringify({ v: 8, decoder: 999, pips: [somePip({ strand: grown })] }));
+    const parsed = parseSave(JSON.stringify({ v: 9, decoder: 999, pips: [somePip({ strand: grown })] }));
     expect(parsed).not.toBeNull();
     expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+  });
+
+  it('the feeder lock rides along, and tampering just unlocks', () => {
+    const on = parseSave(JSON.stringify({ v: 9, decoder: DECODER, lock: true, pips: [somePip()] }));
+    expect(on!.lock).toBe(true);
+    const off = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip()] }));
+    expect(off!.lock).toBe(false);
+    const tampered = parseSave(JSON.stringify({ v: 9, decoder: DECODER, lock: 'yes', pips: [somePip()] }));
+    expect(tampered!.lock).toBe(false);
+    // an older save simply arrives unlocked
+    const v8 = parseSave(JSON.stringify({ v: 8, decoder: DECODER, lock: true, pips: [somePip()] }));
+    expect(v8!.lock).toBe(false);
   });
 });

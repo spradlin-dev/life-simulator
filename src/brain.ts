@@ -139,6 +139,10 @@ export function chooseState(
     // stays down until it has clawed some back, so the end-game reads as slow
     // stagger-and-fall, not flicker
     if (starving && needs.rest >= 0.4) return decide('wander');
+    // a genuinely hungry (but not collapsed) sleeper wakes for food within
+    // easy reach, so a fed meadow grazes in gentle cycles instead of sleeping
+    // into starvation; the collapsed keep their close-reach rescue rule above
+    if (!starving && needs.food < 0.3 && treatDist < 480) return decide('snack');
     // exhausted sleep is deep sleep: proximity can't break it (a real scare
     // still does — the fear checks above outrank sleep entirely). A collapsed
     // starving pip can't be nudged awake at all: a rescuer hovering close
@@ -151,12 +155,14 @@ export function chooseState(
     return decide('sleep');
   }
   // a starving pip cannot settle into sleep, however tired — it stays
-  // desperately awake until the body simply gives out. Mid-bite the collapse
-  // waits: interrupting the chew would reset it every tick and deadlock the
-  // rescue at zero rest
-  if (needs.rest <= 0 && current !== 'snack') return decide('sleep');
-  if (!starving && needs.rest < 0.15) return decide('sleep');
-  if (!starving && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
+  // desperately awake until the body simply gives out. And EVERY sleep pull
+  // waits for a bite in progress: interrupting the chew resets it each tick,
+  // which deadlocked rescue at zero rest and flickered grazers into
+  // starvation while they looked busy eating
+  const midBite = current === 'snack';
+  if (needs.rest <= 0 && !midBite) return decide('sleep');
+  if (!starving && needs.rest < 0.15 && !midBite) return decide('sleep');
+  if (!starving && !midBite && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
 
   // hunger sharpens the nose: the notice range starts at today's 480 and
   // stretches as the belly empties

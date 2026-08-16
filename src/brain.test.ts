@@ -281,6 +281,24 @@ describe('chooseState', () => {
     expect(spent.state).toBe('sleep');
   });
 
+  it('a hungry sleeper wakes for food within easy reach', () => {
+    const graze = chooseState('sleep', calm, { food: 0.25, rest: 0.6, fun: 0.5 }, plain, senses({ presence: 0, treatDist: 300 }));
+    expect(graze.state).toBe('snack');
+    const tooFar = chooseState('sleep', calm, { food: 0.25, rest: 0.6, fun: 0.5 }, plain, senses({ presence: 0, treatDist: 1000 }));
+    expect(tooFar.state).toBe('sleep');
+    const notHungry = chooseState('sleep', calm, { food: 0.6, rest: 0.6, fun: 0.5 }, plain, senses({ presence: 0, treatDist: 300 }));
+    expect(notHungry.state).toBe('sleep');
+  });
+
+  it('a grazing pip keeps its bite: no sleep pull may bounce it mid-chew', () => {
+    // unattended meadow: stillness sleep and tiredness sleep both tug at a
+    // freshly woken grazer — neither may steal the bite out of its mouth
+    const afk = senses({ presence: 0, stillFor: 999, treatDist: 300 });
+    expect(chooseState('sleep', calm, { food: 0.25, rest: 0.6, fun: 0.5 }, plain, afk).state).toBe('snack');
+    expect(chooseState('snack', calm, { food: 0.25, rest: 0.6, fun: 0.5 }, plain, afk).state).toBe('snack');
+    expect(chooseState('snack', calm, { food: 0.25, rest: 0.1, fun: 0.5 }, plain, afk).state).toBe('snack');
+  });
+
   it('a hovering rescuer cannot startle a collapsed pip awake', () => {
     const d = chooseState('sleep', calm, { food: 0, rest: 0.2, fun: 0.5 }, plain, senses({ presence: 1, dist: 100 }));
     expect(d.state).toBe('sleep');

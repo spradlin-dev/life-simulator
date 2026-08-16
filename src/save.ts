@@ -39,17 +39,20 @@ export interface PipSave {
 
 export interface WorldSave {
   pips: PipSave[];
+  lock: boolean;
 }
 
 const KEY = 'pip-save';
 // one ceiling for both the save file and the live population (main.ts gates
 // births on it): sharing the constant means the writer can never outgrow the
-// reader, and a tampered file can't resurrect a million pips
-export const MAX_SAVED_PIPS = 300;
+// reader, and a tampered file can't resurrect a million pips. Since the food
+// economy became the real population limit this sits far above any reachable
+// flock — it is a tamper belt, not a gameplay wall
+export const MAX_SAVED_PIPS = 3000;
 
-export function serialize(pips: readonly LivePip[]): string {
+export function serialize(pips: readonly LivePip[], lock: boolean): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 8, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 9, decoder: DECODER_VERSION, lock, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -142,8 +145,9 @@ export function parseSave(raw: string): WorldSave | null {
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
   // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
-  // genome); future versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  // genome, v8 the feeder lock); future versions must keep MIGRATING — a pip
+  // must never be lost
+  if (d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
@@ -163,10 +167,11 @@ export function parseSave(raw: string): WorldSave | null {
       // the cached stats, so the pip itself never changes and is never lost
       const raw = (entry as Record<string, unknown>).strand;
       const strand =
-        d.v === 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
+        d.v >= 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
       pips.push({ ...pip, strand, generation, name });
     }
-    return { pips };
+    // the feeder lock is a setting, not a creature: tampered values just unlock
+    return { pips, lock: d.v === 9 && d.lock === true };
   }
   if (d.v !== 1 && d.v !== 2 && d.v !== 3) return null;
 
@@ -192,6 +197,7 @@ export function parseSave(raw: string): WorldSave | null {
     pips: [
       { ...core, strand: encode(core.genes), needs, pos, disp, places, generation: 0, name: makeName() },
     ],
+    lock: false,
   };
 }
 
@@ -212,9 +218,9 @@ export function clearSave(): void {
   }
 }
 
-export function storeSave(pips: readonly LivePip[]): void {
+export function storeSave(pips: readonly LivePip[], lock: boolean): void {
   try {
-    localStorage.setItem(KEY, serialize(pips));
+    localStorage.setItem(KEY, serialize(pips, lock));
   } catch {
     // storage unavailable (private mode, quota) — the pips just live for the session
   }
