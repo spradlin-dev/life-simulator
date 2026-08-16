@@ -271,14 +271,16 @@ function distToPointerOf(pip: Pip): number {
   return Math.hypot(pointer.x - pip.x, pointer.y - pip.y);
 }
 
-// panic radiates: the fear of nearby fleeing pips, discounted by distance
+// panic radiates downhill: only a MORE frightened neighbor is alarming, and only
+// by the fear gap — so a mutual panic always drains instead of self-sustaining
 function alarmNear(self: Pip): number {
   let worst = 0;
   for (const other of pips) {
     if (other === self) continue;
     if (other.state !== 'flee' && other.state !== 'cower') continue;
     const d = Math.hypot(other.x - self.x, other.y - self.y);
-    worst = Math.max(worst, other.moods.fear * Math.max(0, 1 - d / 240));
+    const gap = other.moods.fear - self.moods.fear;
+    worst = Math.max(worst, gap * Math.max(0, 1 - d / 240));
   }
   return worst;
 }
