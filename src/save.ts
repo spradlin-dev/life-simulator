@@ -23,6 +23,7 @@ export interface LivePip {
   places: readonly number[];
   generation: number;
   name: string;
+  age: number;
 }
 
 export interface PipSave {
@@ -35,6 +36,7 @@ export interface PipSave {
   places: number[];
   generation: number;
   name: string;
+  age: number;
 }
 
 export interface WorldSave {
@@ -55,7 +57,7 @@ export const MAX_SAVED_PIPS = 3000;
 
 export function serialize(pips: readonly LivePip[]): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 10, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({ v: 11, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -116,7 +118,7 @@ function parseMemories(
 
 // a complete modern pip entry (roster entries carry every structural field;
 // generation and name are versioned separately)
-function parseFullPip(entry: unknown): Omit<PipSave, 'generation' | 'name' | 'strand'> | null {
+function parseFullPip(entry: unknown): Omit<PipSave, 'generation' | 'name' | 'strand' | 'age'> | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const d = entry as Record<string, unknown>;
   const core = parseCore(d);
@@ -141,9 +143,9 @@ export function parseSave(raw: string): WorldSave | null {
   const d = data as Record<string, unknown>;
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
   // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
-  // genome, v8 the feeder lock, v9 stored the lock, v10 retired it); future
-  // versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  // genome, v8 the feeder lock, v9 stored the lock, v10 retired it, v11 the
+  // age); future versions must keep MIGRATING — a pip must never be lost
+  if (d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
@@ -164,7 +166,14 @@ export function parseSave(raw: string): WorldSave | null {
       const raw = (entry as Record<string, unknown>).strand;
       const strand =
         d.v >= 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
-      pips.push({ ...pip, strand, generation, name });
+      // age arrived in v11; older saves and mangled values get a scattered
+      // midlife jitter so a migrated flock never ages out in one wave
+      const rawAge = (entry as Record<string, unknown>).age;
+      const age =
+        d.v >= 11 && typeof rawAge === 'number' && Number.isFinite(rawAge) && rawAge >= 0
+          ? rawAge
+          : Math.random() * 1440;
+      pips.push({ ...pip, strand, generation, name, age });
     }
     // v9's feeder lock is retired: whatever a save says about it is ignored
     return { pips };
@@ -191,7 +200,17 @@ export function parseSave(raw: string): WorldSave | null {
   }
   return {
     pips: [
-      { ...core, strand: encode(core.genes), needs, pos, disp, places, generation: 0, name: makeName() },
+      {
+        ...core,
+        strand: encode(core.genes),
+        needs,
+        pos,
+        disp,
+        places,
+        generation: 0,
+        name: makeName(),
+        age: Math.random() * 1440,
+      },
     ],
   };
 }

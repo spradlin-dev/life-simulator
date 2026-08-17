@@ -10,7 +10,8 @@ export interface Dials {
   wildness: number; // multiplies the copyist's tremble
   appetite: number; // multiplies belly drain
   weariness: number; // multiplies how fast awake bodies tire
-  feeder: number; // multiplies the locked feeder's drip
+  feeder: number; // multiplies the ambient berry growth
+  longevity: number; // multiplies every lifespan
   strangeness: number; // drift generations a wander-in arrives with
 }
 
@@ -30,6 +31,7 @@ export const DIAL_SPECS: Record<keyof Dials, DialSpec> = {
   appetite: { min: 0.25, max: 4, fresh: 1, log: true, whole: false },
   weariness: { min: 0.25, max: 4, fresh: 1, log: true, whole: false },
   feeder: { min: 0.25, max: 4, fresh: 1, log: true, whole: false },
+  longevity: { min: 0.25, max: 4, fresh: 1, log: true, whole: false },
   strangeness: { min: 0, max: 60, fresh: 6, log: false, whole: true },
 };
 

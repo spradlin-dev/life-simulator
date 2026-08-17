@@ -13,6 +13,7 @@ import {
   type Senses,
 } from './brain.ts';
 import { eat, FRESH_NEEDS, happinessOf, tickNeeds, type Needs } from './needs.ts';
+import { eldernessOf, lifespanOf } from './aging.ts';
 import {
   effectiveGenes,
   fadePlaces,
@@ -383,7 +384,12 @@ interface Pip {
   swellComfort: number[];
   sinceSplit: number;
   starvingFor: number;
+  age: number;
+  // this body's own span, from its genes; the longevity dial scales it live
+  lifespan: number;
   poofFor: number;
+  // why a poof is underway: only a hunger fade can be cancelled by food
+  fading: 'hunger' | 'age' | null;
   wanderTarget: Vec | null;
   pauseFor: number;
   blinkIn: number;
@@ -397,7 +403,7 @@ interface Pip {
   antenna: { x: number; y: number; vx: number; vy: number };
 }
 
-function makePip(genes: Genes, strand: string, x: number, y: number, generation = 0, name = makeName()): Pip {
+function makePip(genes: Genes, strand: string, x: number, y: number, generation = 0, name = makeName(), age = 0): Pip {
   return {
     x,
     y,
@@ -421,7 +427,10 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     // arrives synchronized (a newborn's 0 is set by divide)
     sinceSplit: SPLIT_COOLDOWN * (0.35 + Math.random() * 0.65),
     starvingFor: 0,
+    age,
+    lifespan: lifespanOf(genes),
     poofFor: 0,
+    fading: null,
     wanderTarget: null,
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
@@ -448,7 +457,12 @@ function randomSpot(): Vec {
 // The strangeness dial sets how far every arrival has traveled
 function wanderIn(x: number, y: number): Pip {
   const strand = drift(FOUNDER_STRAND, dials.strangeness);
-  return makePip(decode(strand), strand, x, y);
+  const pip = makePip(decode(strand), strand, x, y);
+  // arrivals have lived a little already — mid-day, mid-life, unsynchronized
+  // (scaled by the longevity dial, or a short-lived terrarium would welcome
+  // wanderers already past their whole span)
+  pip.age = Math.random() * 0.35 * pip.lifespan * dials.longevity;
+  return pip;
 }
 
 // the goodbye is a soft handful of pastel sparks, never a body
@@ -521,6 +535,7 @@ function snapshotWorld(): LivePip[] {
     places: pip.places,
     generation: pip.generation,
     name: pip.name,
+    age: pip.age,
   }));
 }
 
@@ -548,7 +563,7 @@ const saved = loadSave(SAVE_KEY);
 if (saved) {
   for (const entry of saved.pips) {
     const spot = entry.pos ? clampToWorld(entry.pos.x, entry.pos.y) : randomSpot();
-    const pip = makePip(entry.genes, entry.strand, spot.x, spot.y, entry.generation, entry.name);
+    const pip = makePip(entry.genes, entry.strand, spot.x, spot.y, entry.generation, entry.name, entry.age);
     pip.moods.trust = entry.trust;
     pip.needs = entry.needs;
     pip.disp = entry.disp;
@@ -625,6 +640,7 @@ function divide(parent: Pip): Pip {
   kid.vx = parent.vx + Math.cos(angle) * 70;
   kid.vy = parent.vy + Math.sin(angle) * 70;
   parent.genes = a.genes;
+  parent.lifespan = lifespanOf(a.genes);
   parent.strand = a.strand;
   parent.needs = a.needs;
   parent.generation = a.generation;
@@ -677,7 +693,14 @@ function showEmote(pip: Pip, symbol: string): void {
 
 // ------------------------------------------------------------------ movement
 
+// how silver a pip is right now, with the terrarium's longevity dial applied
+function elderOf(pip: Pip): number {
+  return eldernessOf(pip.age, pip.lifespan * dials.longevity);
+}
+
 function steerToward(pip: Pip, tx: number, ty: number, accel: number, maxSpeed: number, dt: number, sulkFactor: number): void {
+  // old bones amble: elders keep every destination, just at their own pace
+  maxSpeed *= lerp(1, 0.62, elderOf(pip));
   // a tired pip shuffles: pace fades once rest drops below half
   const shuffle = 0.75 + 0.25 * Math.min(1, pip.needs.rest * 2);
   const zip = lerp(0.85, 1.15, pip.genes.liveliness) * lerp(1, 0.8, sulkFactor) * shuffle;
@@ -958,9 +981,11 @@ function drawTreats(t: number): void {
 function bodyColorOf(pip: Pip, sulkFactor: number, hungry: number): string {
   const g = pip.genes;
   const fear = pip.moods.fear;
+  // silver comes with the years: an elder's color quiets and lightens
+  const silver = elderOf(pip);
   let h = hueShift(g.hue, 250, fear * 0.4);
-  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulkFactor) * (1 - hungry * 0.2);
-  const l = g.light + fear * 5 - sulkFactor * 4 - hungry * 3;
+  let s = g.sat * (1 - fear * 0.35) * lerp(1, 0.55, sulkFactor) * (1 - hungry * 0.2) * (1 - silver * 0.35);
+  const l = g.light + fear * 5 - sulkFactor * 4 - hungry * 3 + silver * 6;
   if (pip.state === 'snuggle') {
     h = hueShift(h, 30, 0.35);
     s = Math.min(90, s + 12);
@@ -973,7 +998,7 @@ function hungerOf(pip: Pip): number {
   return Math.max(0, (0.45 - pip.needs.food) / 0.45);
 }
 
-const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e' };
+const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e', '✿': '#e8b4d0' };
 
 function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): void {
   const speed = Math.hypot(pip.vx, pip.vy);
@@ -1018,6 +1043,7 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   }
 
   const hungry = hungerOf(pip);
+  const elder = elderOf(pip);
   const bob = asleep
     ? Math.sin(t * 2) * 1.5
     : Math.sin(t * (6 + speed / 40)) * Math.min(3, 1 + speed / 80) * (1 - hungry * 0.5);
@@ -1083,6 +1109,23 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
   ctx.beginPath();
   ctx.ellipse(x, y, R * sx, R * sy * squish, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // old age, worn proudly: a little silver bun behind the crown
+  if (elder > 0.05) {
+    ctx.globalAlpha = bodyAlpha * Math.min(1, elder * 2);
+    const bx = x - pip.facing * R * 0.55;
+    const by = headTopY + R * 0.18;
+    ctx.fillStyle = '#cdd6de';
+    ctx.beginPath();
+    ctx.arc(bx, by, R * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#aeb9c4';
+    ctx.beginPath();
+    ctx.arc(bx, by, R * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = bodyAlpha;
+  }
 
   // freckles: only past the midpoint band, seeded from the genome so each
   // pip's pattern is its own and never flickers
@@ -1170,6 +1213,32 @@ function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): 
       ctx.ellipse(ex, eyeY - eyeR * (2 - 1.7 * lid), eyeR + 1.5, eyeR, 0, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  // the years, written gently: laugh lines first, reading glasses later
+  if (elder > 0.05) {
+    ctx.strokeStyle = `rgba(28, 39, 51, ${(0.4 * elder).toFixed(3)})`;
+    ctx.lineWidth = 1.2;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(x + side * eyeGap, eyeY + 8, 3, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.stroke();
+    }
+  }
+  if (elder > 0.35) {
+    const clear = Math.min(1, (elder - 0.35) / 0.3);
+    const glassR = lerp(4, 7, g.eyeSize) + 2.5;
+    ctx.strokeStyle = `rgba(201, 212, 222, ${(0.85 * clear).toFixed(3)})`;
+    ctx.lineWidth = 1.4;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(x + side * eyeGap, eyeY, glassR, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(x - eyeGap + glassR, eyeY - 2);
+    ctx.quadraticCurveTo(x, eyeY - 4, x + eyeGap - glassR, eyeY - 2);
+    ctx.stroke();
   }
 
   // mouth (yawns and munching)
@@ -1368,8 +1437,9 @@ function updateCensus(t: number): void {
         : pip.state === 'sleep'
           ? 'passed out — needs a berry'
           : 'famished — needs a berry';
+    const silver = elderOf(pip) > 0.05 ? ' · elder' : '';
     (row.lastElementChild as HTMLElement).textContent =
-      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))} · ${meter(happiness)} · ${stateLabel}`;
+      `${pip.name} · gen ${pip.generation} · ${natureLabel(pip.genes)}${temperSuffix(pip.disp, isHealing(pip.disp, happiness))}${silver} · ${meter(happiness)} · ${stateLabel}`;
     row.classList.toggle('selected', pip === selectedPip);
   }
 }
@@ -1389,6 +1459,7 @@ const DIAL_LABELS: Record<keyof Dials, string> = {
   appetite: 'appetite',
   weariness: 'weariness',
   feeder: 'berry growth',
+  longevity: 'longevity',
   strangeness: 'strangeness',
 };
 
@@ -1736,17 +1807,26 @@ function simulate(dt: number, t: number): void {
     updateTimers(pip, dt, sulkFactor);
 
     // the gentle goodbye: a long-empty belly fades a pip, and if nobody ever
-    // feeds it, it shrinks and poofs into sparkles. any bite cancels
-    // everything, and the grace window is pure meadow time — no dial cuts it
+    // feeds it, it shrinks and poofs into sparkles. Any bite cancels a hunger
+    // fade — but not old age, which no berry can feed — and both clocks run
+    // on pure meadow time: no dial cuts a grace window short
+    pip.age += dt;
     if (pip.needs.food <= 0) pip.starvingFor += dt;
     else pip.starvingFor = 0;
-    if (pip.poofFor > 0 && pip.needs.food > 0) {
+    if (pip.poofFor > 0 && pip.fading === 'hunger' && pip.needs.food > 0) {
       pip.poofFor = 0;
+      pip.fading = null;
       showEmote(pip, '♥');
     } else if (pip.poofFor > 0) {
       pip.poofFor -= dt;
       if (pip.poofFor <= 0) leaving.push(pip);
+    } else if (pip.age >= pip.lifespan * dials.longevity) {
+      // a whole life, fully lived: this goodbye wears a flower
+      pip.fading = 'age';
+      pip.poofFor = POOF_S;
+      showEmote(pip, '✿');
     } else if (pip.starvingFor >= STARVE_POOF_AT) {
+      pip.fading = 'hunger';
       pip.poofFor = POOF_S;
       showEmote(pip, '✧');
     }

@@ -35,6 +35,7 @@ function somePip(overrides: Partial<LivePip> = {}): LivePip {
     places: somePlaces(),
     generation: 3,
     name: 'Tester',
+    age: 777,
     ...overrides,
   };
 }
@@ -67,9 +68,31 @@ describe('save round-trip', () => {
 
   it('stamps the current version and decoder on every save it writes', () => {
     const written = JSON.parse(serialize([somePip()]));
-    expect(written.v).toBe(10);
+    expect(written.v).toBe(11);
     expect(written.decoder).toBe(DECODER_VERSION);
     expect('lock' in written).toBe(false);
+  });
+
+  it('age survives the round-trip exactly, and mangled ages scatter into midlife', () => {
+    expect(parseSave(serialize([somePip({ age: 2500.5 })]))!.pips[0].age).toBe(2500.5);
+    const negative = parseSave(JSON.stringify({ v: 11, decoder: DECODER_VERSION, pips: [somePip({ age: -40 })] }));
+    expect(negative!.pips[0].age).toBeGreaterThanOrEqual(0);
+    expect(negative!.pips[0].age).toBeLessThanOrEqual(1440);
+  });
+
+  it('pre-age saves scatter every pip into midlife, never a synchronized wave', () => {
+    const { age: _a, ...aged } = somePip();
+    const parsed = parseSave(JSON.stringify({ v: 10, decoder: DECODER_VERSION, pips: [aged, aged, aged] }));
+    for (const pip of parsed!.pips) {
+      expect(pip.age).toBeGreaterThanOrEqual(0);
+      expect(pip.age).toBeLessThanOrEqual(1440);
+    }
+  });
+
+  it('age is a v11 field: a pre-v11 save that somehow carries one still scatters', () => {
+    const parsed = parseSave(JSON.stringify({ v: 10, decoder: DECODER_VERSION, pips: [somePip({ age: 999 })] }));
+    expect(parsed!.pips[0].age).not.toBe(999);
+    expect(parsed!.pips[0].age).toBeLessThanOrEqual(1440);
   });
 });
 
@@ -199,7 +222,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 11, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 12, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
