@@ -10,7 +10,11 @@ import {
   enzymeGrant,
   enzymesOf,
   FOUNDER_STRAND,
+  integrateFragment,
   isValidStrand,
+  MOB_FLOOR,
+  MOB_SIG,
+  mobilityOf,
   mutateGenome,
   needsEnzymeGrant,
   PIGMENT_SIGS,
@@ -478,6 +482,69 @@ describe('content genes: the enzyme layer', () => {
   it('the grant marker: pre-enzyme strands ask, granted strands never do', () => {
     expect(needsEnzymeGrant(FOUNDER_STRAND)).toBe(true);
     expect(needsEnzymeGrant(GRANTED)).toBe(false);
+  });
+});
+
+describe('gene transfer machinery', () => {
+  const GRANTED = FOUNDER_STRAND + enzymeGrant('red');
+
+  it('the MOB signature keeps its distance from every pigment, and cannot truncate', () => {
+    expect(MOB_SIG).toHaveLength(12);
+    expect(MOB_SIG.includes('ATG')).toBe(false);
+    expect(MOB_SIG.includes('TAA')).toBe(false);
+    for (const sig of Object.values(PIGMENT_SIGS)) {
+      let d = 0;
+      for (let i = 0; i < 12; i++) if (MOB_SIG[i] !== sig[i]) d++;
+      expect(d).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it('no founder can donate: mobility must be invented in the junk', () => {
+    expect(mobilityOf(GRANTED)).toBeLessThan(MOB_FLOOR);
+    expect(mobilityOf(GRANTED + 'GG' + 'ATG' + MOB_SIG + 'TAA')).toBe(1);
+  });
+
+  it('a fragment lands only on a near-identical arm, replacing equal length', () => {
+    const recipient = FOUNDER_STRAND + 'CCCCCCCCCCCC';
+    // carve a fragment out of a sibling strand: its arm exists verbatim
+    const fragment = FOUNDER_STRAND.slice(40, 70);
+    const grown = integrateFragment(recipient, fragment);
+    expect(grown).not.toBeNull();
+    expect(grown!).toHaveLength(recipient.length);
+    expect(grown!.slice(40, 70)).toBe(fragment);
+  });
+
+  it('no homology, no landing — and slivers are lost outright', () => {
+    expect(integrateFragment('ACGT'.repeat(30), 'TTTTTTTTTTTTTTTTTTTT')).toBeNull();
+    expect(integrateFragment(FOUNDER_STRAND, FOUNDER_STRAND.slice(10, 24))).toBeNull();
+  });
+
+  it('the arm is strict: seven of eight lands, six does not', () => {
+    // the landing site must not be self-similar: a periodic site lets a
+    // shifted window re-align a mismatched arm perfectly
+    const recipient = 'C'.repeat(60) + 'ATCGGTCA' + 'C'.repeat(60);
+    const body = 'G'.repeat(16);
+    const seven = integrateFragment(recipient, 'ATCGGTCC' + body);
+    expect(seven).not.toBeNull();
+    expect(seven!.slice(60, 84)).toBe('ATCGGTCC' + body);
+    expect(integrateFragment(recipient, 'ATCGGTGG' + body)).toBeNull();
+  });
+
+  it('the bare founder cannot donate either', () => {
+    expect(mobilityOf(FOUNDER_STRAND)).toBeLessThan(MOB_FLOOR);
+  });
+
+  it('a whole capability can ride across: the enzyme arrives working', () => {
+    // the donor's tail carries the granted enzyme; the arm ahead of it is
+    // founder junk the recipient also carries, so the fragment lands and
+    // the recipient starts digesting red on the spot
+    const donor = GRANTED;
+    const fragment = donor.slice(donor.length - 40);
+    const recipient = FOUNDER_STRAND + 'GCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGC';
+    const grown = integrateFragment(recipient, fragment);
+    expect(grown).not.toBeNull();
+    expect(enzymesOf(recipient).red).toBeLessThan(0.2);
+    expect(enzymesOf(grown!).red).toBe(1);
   });
 });
 

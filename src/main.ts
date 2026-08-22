@@ -11,6 +11,9 @@ import {
   enzymesOf,
   forceAppendGrant,
   FOUNDER_STRAND,
+  integrateFragment,
+  MOB_FLOOR,
+  mobilityOf,
   needsEnzymeGrant,
   tryAppendGrant,
   type DnaStat,
@@ -390,6 +393,101 @@ function bestFood(pip: Pip): BerryKind {
 function setStrand(pip: Pip, strand: string): void {
   pip.strand = strand;
   pip.enzymes = enzymesOf(strand);
+  pip.mobility = mobilityOf(strand);
+}
+
+// ------------------------------------------------------- gene transfer
+// conjugation needs a quiet nap together — sixteen calm seconds for the
+// smallest fragment, forty-eight to fill the bridge, right inside an
+// ordinary pile-nap. The head only walks while both bodies stay calm,
+// slow, and touching, and only a PILIATED neighbor can be read from —
+// most meadows hold none until some lineage invents the machinery in
+// its junk (see MOB_SIG in dna.ts)
+const PILUS_REACH = 50;
+const PILUS_SPEED = 1; // letters per sim-second: duration IS the rate
+const PILUS_MIN_FRAG = 16;
+// the bridge only carries so much before it lets go: one event converts a
+// gene's width or two, never an identity — however long the nap
+const PILUS_MAX_FRAG = 48;
+const TRANSFER_CALM_FEAR = 0.2;
+const TRANSFER_CALM_SPEED = 30;
+
+function calmForTransfer(pip: Pip): boolean {
+  return pip.moods.fear < TRANSFER_CALM_FEAR && Math.hypot(pip.vx, pip.vy) < TRANSFER_CALM_SPEED;
+}
+
+// a walk in progress survives while both stay calm and in reach — a nearer
+// donor never steals it (without this hysteresis a pip between two donors
+// would reset forever, transferring LESS than one beside a single donor)
+function linkHolds(pip: Pip, partner: Pip): boolean {
+  return (
+    calmForTransfer(pip) &&
+    calmForTransfer(partner) &&
+    partner.mobility >= MOB_FLOOR &&
+    pips.includes(partner) &&
+    Math.hypot(partner.x - pip.x, partner.y - pip.y) < PILUS_REACH
+  );
+}
+
+function calmPiliatedNeighbor(pip: Pip): Pip | null {
+  if (!calmForTransfer(pip)) return null;
+  let best: Pip | null = null;
+  let bestDist = PILUS_REACH;
+  for (const other of pips) {
+    if (other === pip || other.mobility < MOB_FLOOR) continue;
+    if (!calmForTransfer(other)) continue;
+    const d = Math.hypot(other.x - pip.x, other.y - pip.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = other;
+    }
+  }
+  return best;
+}
+
+// the link broke: whatever the head copied while it rode tries to land in
+// this pip's strand by homology. It reads a SNAPSHOT taken when the bridge
+// formed — the letters delivered are the letters walked, whatever became
+// of the neighbor since (a partner may even give this last gift from
+// beyond its poof)
+function settleFragment(pip: Pip): void {
+  const head = pip.transferHead;
+  if (head.strand && head.covered >= PILUS_MIN_FRAG) {
+    const frag = head.strand.slice(head.start, head.start + Math.floor(head.covered));
+    const grown = integrateFragment(pip.strand, frag);
+    // converting identical letters is a biological no-op: only a REAL
+    // change re-reads the pip or says anything to the watcher
+    if (grown !== null && grown !== pip.strand) {
+      setStrand(pip, grown);
+      // rates and looks re-read live; the SPAN stays the body's own — it
+      // was set by the flesh that grew, and acquired genes reach the
+      // daughters through division's own re-pricing. No nap may hand a
+      // pip its goodbye
+      pip.genes = decode(grown);
+      flockVersion++;
+      saveQueued = true;
+      if (pip.emoteFor <= 0 && pip.fading === null) showEmote(pip, '✦');
+    }
+  }
+  head.partner = null;
+  head.strand = '';
+  head.covered = 0;
+}
+
+function updateTransferHead(pip: Pip, dt: number): void {
+  const head = pip.transferHead;
+  if (head.partner && linkHolds(pip, head.partner)) {
+    head.covered = Math.min(head.covered + PILUS_SPEED * dt, PILUS_MAX_FRAG);
+    return;
+  }
+  settleFragment(pip);
+  const near = calmPiliatedNeighbor(pip);
+  if (near) {
+    head.partner = near;
+    head.strand = near.strand;
+    head.start = Math.floor(Math.random() * Math.max(1, near.strand.length - PILUS_MIN_FRAG));
+    head.covered = 0;
+  }
 }
 
 // ------------------------------------------------------------------ the pips
@@ -443,6 +541,13 @@ interface Pip {
   // digestion per pigment, cached from the strand's enzyme genes — derived
   // state, recomputed wherever the strand changes, never saved
   enzymes: Record<BerryKind, number>;
+  // whether this strand carries the transfer machinery, cached beside it
+  // (the DONOR wears the pilus; this reading head belongs to the receiver)
+  mobility: number;
+  // the transfer head: which piliated neighbor it is reading, a snapshot
+  // of their strand from the moment the bridge formed, and how far a
+  // quiet hour has let it walk
+  transferHead: { partner: Pip | null; strand: string; start: number; covered: number };
   pauseFor: number;
   blinkIn: number;
   emote: string;
@@ -486,6 +591,8 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     wanderTarget: null,
     gut: [],
     enzymes: enzymesOf(strand),
+    mobility: mobilityOf(strand),
+    transferHead: { partner: null, strand: '', start: 0, covered: 0 },
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
     emote: '',
@@ -1151,7 +1258,7 @@ function hungerOf(pip: Pip): number {
   return Math.max(0, (0.45 - pip.needs.food) / 0.45);
 }
 
-const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e', '✿': '#e8b4d0' };
+const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e', '✿': '#e8b4d0', '✦': '#8fd8e8' };
 
 function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): void {
   const speed = Math.hypot(pip.vx, pip.vy);
@@ -1568,7 +1675,8 @@ function updateDnaPanel(): void {
   const eats = BERRY_KINDS.filter((k) => pip.enzymes[k] >= ENZYME_TRACE_SHOW)
     .map((k) => `${pip.enzymes[k] < ENZYME_CHASE_FLOOR ? '~' : ''}${k} ${Math.round(pip.enzymes[k] * 100)}%`)
     .join(' · ');
-  dnaTitle.textContent = `${pip.name} · ${pip.strand.length} bases · eats ${eats || 'nothing yet'}`;
+  const pilus = pip.mobility >= MOB_FLOOR ? ' · pilus' : '';
+  dnaTitle.textContent = `${pip.name} · ${pip.strand.length} bases · eats ${eats || 'nothing yet'}${pilus}`;
   if (dnaShownStrand === pip.strand) return;
   dnaShownStrand = pip.strand;
   dnaStrand.replaceChildren();
@@ -1970,6 +2078,8 @@ function simulate(dt: number, t: number): void {
         plantSprout(seed.kind, pip.x, pip.y);
       }
     }
+
+    updateTransferHead(pip, dt);
 
     pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed, dials.appetite, dials.weariness);
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);

@@ -300,7 +300,9 @@ export const STRAND_MAX = 1200;
 // content. No registry, no tag, no saturation: a lineage gains a food when
 // a start forming in junk wakes a new enzyme that drifts toward a pigment —
 // de novo birth is the dominant road (measured; an intact duplicated ORF
-// surviving the copyist is the rare one) — and it loses nothing it had.
+// surviving the copyist is the rare one). What a strand holds can also be
+// LOST: drift, and a neighbor's gene conversions, take as honestly as
+// they give.
 export const ENZYME_START = 'ATG';
 export const ENZYME_STOP = 'TAA';
 const ENZYME_MIN_BODY = 6;
@@ -347,17 +349,63 @@ function enzymeEff(body: string, sig: string): number {
   return Math.max(0, (best - 0.5) / 0.5);
 }
 
-// a body's digestion of each color: the best enzyme does the work, so
-// spare copies are free to drift toward other pigments
+// the best ORF against one signature does the work, so spare copies are
+// free to drift toward other functions
+function sigEff(bodies: readonly string[], sig: string): number {
+  let best = 0;
+  for (const body of bodies) {
+    const eff = enzymeEff(body, sig);
+    if (eff > best) best = eff;
+  }
+  return best;
+}
+
+// a body's digestion of each color
 export function enzymesOf(strand: string): Record<BerryKind, number> {
-  const out: Record<BerryKind, number> = { red: 0, gold: 0, blue: 0 };
-  for (const body of enzymeBodies(strand)) {
-    for (const kind of Object.keys(PIGMENT_SIGS) as BerryKind[]) {
-      const eff = enzymeEff(body, PIGMENT_SIGS[kind]);
-      if (eff > out[kind]) out[kind] = eff;
+  const bodies = enzymeBodies(strand);
+  return {
+    red: sigEff(bodies, PIGMENT_SIGS.red),
+    gold: sigEff(bodies, PIGMENT_SIGS.gold),
+    blue: sigEff(bodies, PIGMENT_SIGS.blue),
+  };
+}
+
+// ------------------------------- gene transfer: the pilus is content too
+// Real conjugation is rare because most cells cannot donate: the transfer
+// machinery itself rides a mobile element. Same law here — a strand can
+// DONATE only if it carries an ORF matching the MOB signature, and no
+// founder does. The capability must be born from junk and drift in, and
+// once born it spreads partly by carrying itself across: a selfish gene,
+// with nobody anywhere setting a rate. (Its GAA heart whispers into
+// antenna length — the appendage gene lengthening the appendages is
+// pleiotropy this design happily keeps)
+export const MOB_SIG = 'ACGGAAGTTGGA';
+export const MOB_FLOOR = 0.35;
+
+export function mobilityOf(strand: string): number {
+  return sigEff(enzymeBodies(strand), MOB_SIG);
+}
+
+// homologous recombination as gene conversion: the fragment lands where
+// its leading arm finds a near-identical site (7 of 8 or better),
+// replacing an equal length of the resident strand — length-neutral, so
+// every bound holds by construction. No site, no landing: the fragment is
+// lost the way most real fragments are
+export function integrateFragment(recipient: string, fragment: string): string | null {
+  if (fragment.length < 16) return null;
+  const arm = fragment.slice(0, 8);
+  let bestAt = -1;
+  let bestScore = 6;
+  for (let i = 0; i + fragment.length <= recipient.length; i++) {
+    let score = 0;
+    for (let j = 0; j < 8; j++) if (recipient[i + j] === arm[j]) score++;
+    if (score > bestScore) {
+      bestScore = score;
+      bestAt = i;
     }
   }
-  return out;
+  if (bestAt < 0) return null;
+  return recipient.slice(0, bestAt) + fragment + recipient.slice(bestAt + fragment.length);
 }
 
 // the bare grant string: a signature-perfect enzyme for one pigment behind
