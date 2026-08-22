@@ -39,8 +39,12 @@ export function splitOutcome(
   rand: () => number = Math.random,
   wildness = 1,
 ): [PipCore, PipCore] {
+  // the mother's polymerase copies both daughters, and her furnace set its
+  // quality: a hot metabolism scorches the machinery it built, a slow one
+  // copies true — heritable evolvability with no gene of its own
+  const fidelity = 1 - decode(core.strand).metabolism;
   const daughter = (): PipCore => {
-    const strand = copyStrand(core.strand, comfort, rand, wildness);
+    const strand = copyStrand(core.strand, comfort, rand, wildness, fidelity);
     return {
       genes: decode(strand),
       strand,

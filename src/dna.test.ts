@@ -40,6 +40,16 @@ function randomGenes(rand: () => number): Genes {
   return sanitizeGenes(g);
 }
 
+// crude strand distance: length delta plus positional mismatches — an early
+// indel inflates every downstream position, so it is fit for direction pins
+// only, never for magnitudes
+const diffsFrom = (source: string, out: string): number => {
+  let d = Math.abs(out.length - source.length);
+  const n = Math.min(out.length, source.length);
+  for (let i = 0; i < n; i++) if (out[i] !== source[i]) d++;
+  return d;
+};
+
 const arcDist = (a: number, b: number): number => {
   const d = Math.abs(a - b) % 360;
   return Math.min(d, 360 - d);
@@ -365,13 +375,7 @@ describe('copyStrand', () => {
   });
 
   it('the wildness dial scales the tremble: same seed, looser copy', () => {
-    const drifted = (wildness: number) => {
-      const out = copyStrand(COPY_STRAND, [0], lcg(7), wildness);
-      const n = Math.min(out.length, COPY_STRAND.length);
-      let diffs = Math.abs(out.length - COPY_STRAND.length);
-      for (let i = 0; i < n; i++) if (out[i] !== COPY_STRAND[i]) diffs++;
-      return diffs;
-    };
+    const drifted = (wildness: number) => diffsFrom(COPY_STRAND, copyStrand(COPY_STRAND, [0], lcg(7), wildness));
     expect(drifted(2)).toBeGreaterThan(drifted(1));
   });
 
@@ -380,6 +384,17 @@ describe('copyStrand', () => {
     const trace = [...thin].map((_, i) => (i === 0 ? 0 : 1));
     const out = copyStrand(thin, trace, rolls({ 0: 0.99, 1: 0.6, 2: 0.995, 3: 0.9 }, 0));
     expect(out).toBe(thin);
+  });
+});
+
+// the polymerase the mother supplies scales the tremble; its default 0.5 is
+// exactly a polymerase of 1, which is why every scripted pin above holds
+// without naming it
+describe('the heritable polymerase', () => {
+  it('a sloppy polymerase slips more than a careful one, same seed and swell', () => {
+    const sloppy = copyStrand(COPY_STRAND, [0], lcg(21), 1, 0);
+    const careful = copyStrand(COPY_STRAND, [0], lcg(21), 1, 1);
+    expect(diffsFrom(COPY_STRAND, sloppy)).toBeGreaterThan(diffsFrom(COPY_STRAND, careful));
   });
 });
 

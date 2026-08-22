@@ -362,11 +362,17 @@ export function drift(strand: string, generations: number, rand: () => number = 
 
 // the trembling copyist: how much the machinery trembles even on a perfect
 // day (no body is a statue) and how much each degree of strain shakes it.
-// At a flat mid-comfort trace the expected slip load matches the drift
-// operators' historical average; bliss copies near-perfectly, fear and
-// hunger copy about twice as loosely
+// At a flat mid-comfort trace and a midpoint polymerase, the expected slip
+// load matches the drift operators' historical average; bliss copies
+// near-perfectly, fear and hunger copy about twice as loosely. The caller
+// supplies the polymerase as a 0..1 carefulness — 0.5 is neutral, the
+// anchors sitting symmetric around a x1 multiplier. It has no tag of its
+// own: the tag set is saturated under this encoder (a corpus sweep found
+// no room for another)
 const COPY_BASE = 0.002;
 const COPY_STRAIN = 0.015;
+const POLY_SLOPPY = 1.6;
+const POLY_CAREFUL = 0.4;
 
 // division's strand copy as an analog process: a read head walks the strand
 // while the parent's comfort trace (sampled across the real seconds of the
@@ -382,8 +388,10 @@ export function copyStrand(
   comfort: readonly number[],
   rand: () => number = Math.random,
   wildness = 1,
+  fidelity = 0.5,
 ): string {
   let out = '';
+  const poly = lerp(POLY_SLOPPY, POLY_CAREFUL, clamp01(fidelity));
   // the head starts with a random partial charge, so the first slip is as
   // likely early on the strand as late — an empty accumulator would leave a
   // cold zone at the strand's head where genes never drift
@@ -394,7 +402,7 @@ export function copyStrand(
       : 0.5;
     // the wildness dial scales the tremble uniformly: comfort still decides
     // WHERE the head slips, the dial only how often
-    wobble += (COPY_BASE + (1 - felt) * COPY_STRAIN) * wildness * (0.5 + rand());
+    wobble += (COPY_BASE + (1 - felt) * COPY_STRAIN) * poly * wildness * (0.5 + rand());
     const letter = strand[pos];
     if (wobble < 1) {
       out += letter;

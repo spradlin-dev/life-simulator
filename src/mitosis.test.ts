@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN, SPLIT_MAX_RATE } from './mitosis.ts';
-import { FOUNDER, GENE_FIELDS } from './genes.ts';
-import { decode, isValidStrand } from './dna.ts';
+import { FOUNDER, GENE_FIELDS, sanitizeGenes } from './genes.ts';
+import { decode, encode, isValidStrand } from './dna.ts';
 
 // deterministic 32-bit LCG; Math.imul keeps every step exact
 function lcg(seed: number): () => number {
@@ -121,6 +121,20 @@ describe('splitOutcome', () => {
     const [a, b] = splitOutcome(core, [0], lcg(9), 0);
     expect(a.strand).toBe(core.strand);
     expect(b.strand).toBe(core.strand);
+  });
+
+  it("the mother's furnace sets the copy: a hot metabolism drifts more", () => {
+    const diffs = (base: string, out: string): number => {
+      let d = Math.abs(out.length - base.length);
+      const n = Math.min(out.length, base.length);
+      for (let i = 0; i < n; i++) if (out[i] !== base[i]) d++;
+      return d;
+    };
+    const hot = { ...core, strand: encode(sanitizeGenes({ ...FOUNDER, metabolism: 1 })) };
+    const cool = { ...core, strand: encode(sanitizeGenes({ ...FOUNDER, metabolism: 0 })) };
+    const [a] = splitOutcome(hot, [0.5], lcg(31));
+    const [b] = splitOutcome(cool, [0.5], lcg(31));
+    expect(diffs(hot.strand, a.strand)).toBeGreaterThan(diffs(cool.strand, b.strand));
   });
 
   it('keeps every gene inside its legal range', () => {
