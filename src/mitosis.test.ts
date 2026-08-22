@@ -104,21 +104,21 @@ describe('splitOutcome', () => {
     expect(isValidStrand(b.strand)).toBe(true);
   });
 
-  it('a terrified swell copies near-perfect clones; a blissful one drifts', () => {
+  it('a blissful swell copies near-perfect clones; a desperate one drifts', () => {
     // scripted zero pre-charge for each daughter's copy head (calls 0 and 284)
     const rigid = (overrides: Record<number, number>) => {
       let i = 0;
       return () => overrides[i++] ?? 0.5;
     };
-    const [rigidA, rigidB] = splitOutcome(core, [0], rigid({ 0: 0, 284: 0 }));
+    const [rigidA, rigidB] = splitOutcome(core, [1], rigid({ 0: 0, 284: 0 }));
     expect(rigidA.strand).toBe(core.strand);
     expect(rigidB.strand).toBe(core.strand);
-    const [warm] = splitOutcome(core, [1], lcg(9));
-    expect(warm.strand).not.toBe(core.strand);
+    const [wild] = splitOutcome(core, [0], lcg(9));
+    expect(wild.strand).not.toBe(core.strand);
   });
 
   it('wildness zero stills the copyist: perfect clones from any swell', () => {
-    const [a, b] = splitOutcome(core, [1], lcg(9), 0);
+    const [a, b] = splitOutcome(core, [0], lcg(9), 0);
     expect(a.strand).toBe(core.strand);
     expect(b.strand).toBe(core.strand);
   });

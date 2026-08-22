@@ -360,22 +360,23 @@ export function drift(strand: string, generations: number, rand: () => number = 
   return s;
 }
 
-// the trembling copyist: how warm the copying machinery idles (a body at
-// zero comfort still hums faintly) and how much each degree of comfort
-// shakes it. At a flat mid-comfort trace the expected slip load matches the
-// drift operators' historical average; terror copies near-perfectly, bliss
-// copies about twice as loosely
+// the trembling copyist: how much the machinery trembles even on a perfect
+// day (no body is a statue) and how much each degree of strain shakes it.
+// At a flat mid-comfort trace the expected slip load matches the drift
+// operators' historical average; bliss copies near-perfectly, fear and
+// hunger copy about twice as loosely
 const COPY_BASE = 0.002;
-const COPY_WARMTH = 0.015;
+const COPY_STRAIN = 0.015;
 
 // division's strand copy as an analog process: a read head walks the strand
 // while the parent's comfort trace (sampled across the real seconds of the
-// swell) feeds a wobble accumulator — warmth hums, fear grips. When wobble
-// crests, the head slips at its current position: a miscopied letter, a
-// stutter (it re-copies the run it just wrote), or a skip (letters never
-// copied). Nobody sets a mutation rate; fidelity falls out of comfort over
-// time, which is why errors cluster where comfort peaked and daughters of
-// the same golden swell share correlated wildness
+// swell) feeds a wobble accumulator — ease steadies the hand, fear and
+// hunger set it trembling. When wobble crests, the head slips at its current
+// position: a miscopied letter, a stutter (it re-copies the run it just
+// wrote), or a skip (letters never copied). Nobody sets a mutation rate;
+// fidelity falls out of comfort over time, which is why errors cluster where
+// distress peaked and daughters of the same hard swell share correlated
+// wildness
 export function copyStrand(
   strand: string,
   comfort: readonly number[],
@@ -393,7 +394,7 @@ export function copyStrand(
       : 0.5;
     // the wildness dial scales the tremble uniformly: comfort still decides
     // WHERE the head slips, the dial only how often
-    wobble += (COPY_BASE + felt * COPY_WARMTH) * wildness * (0.5 + rand());
+    wobble += (COPY_BASE + (1 - felt) * COPY_STRAIN) * wildness * (0.5 + rand());
     const letter = strand[pos];
     if (wobble < 1) {
       out += letter;

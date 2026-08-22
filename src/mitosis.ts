@@ -32,7 +32,7 @@ export interface PipCore {
 // stats are read fresh from it — heredity IS the genome, so the parent's
 // genes are not even accepted here — and the meal that fueled the division
 // is shared between them. Both daughters ride the same trace: sisters of a
-// warm moment share correlated wildness
+// hard moment share correlated wildness
 export function splitOutcome(
   core: Omit<PipCore, 'genes'>,
   comfort: readonly number[],

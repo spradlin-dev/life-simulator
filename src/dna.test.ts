@@ -294,9 +294,9 @@ describe('drift', () => {
 });
 
 describe('copyStrand', () => {
-  it('a body at zero comfort copies rigidly: the perfect clone', () => {
-    // pre-charge scripted to zero; cold accumulation alone cannot cross
-    expect(copyStrand(COPY_STRAND, [0], rolls({ 0: 0 }, 0.5))).toBe(COPY_STRAND);
+  it('a body at perfect comfort copies rigidly: the perfect clone', () => {
+    // pre-charge scripted to zero; a steady hand's accumulation cannot cross
+    expect(copyStrand(COPY_STRAND, [1], rolls({ 0: 0 }, 0.5))).toBe(COPY_STRAND);
   });
 
   it('an empty trace reads as mid comfort', () => {
@@ -307,18 +307,18 @@ describe('copyStrand', () => {
     expect(diffs).toBeLessThanOrEqual(3);
   });
 
-  it('warmth loosens the copy, and the same seed repeats it exactly', () => {
-    const warm = copyStrand(COPY_STRAND, [1], lcg(11));
-    expect(copyStrand(COPY_STRAND, [1], lcg(11))).toBe(warm);
+  it('strain loosens the copy, and the same seed repeats it exactly', () => {
+    const strained = copyStrand(COPY_STRAND, [0], lcg(11));
+    expect(copyStrand(COPY_STRAND, [0], lcg(11))).toBe(strained);
     const countDiffs = (s: string) =>
       s.length === COPY_STRAND.length ? [...s].filter((c, i) => c !== COPY_STRAND[i]).length : 99;
-    const cool = copyStrand(COPY_STRAND, [0.1], lcg(11));
-    expect(countDiffs(warm)).toBeGreaterThan(countDiffs(cool));
+    const calm = copyStrand(COPY_STRAND, [0.9], lcg(11));
+    expect(countDiffs(strained)).toBeGreaterThan(countDiffs(calm));
   });
 
-  it('slips cluster where comfort peaked: errors have geography', () => {
-    // the warm middle third shakes the head ~8x harder than the cold ends
-    const out = copyStrand(COPY_STRAND, [0, 1, 0], lcg(5));
+  it('slips cluster where distress peaked: errors have geography', () => {
+    // the strained middle third shakes the head ~8x harder than the easy ends
+    const out = copyStrand(COPY_STRAND, [1, 0, 1], lcg(5));
     const n = Math.min(out.length, COPY_STRAND.length);
     const diffs: number[] = [];
     for (let i = 0; i < n; i++) if (out[i] !== COPY_STRAND[i]) diffs.push(i);
@@ -327,19 +327,19 @@ describe('copyStrand', () => {
   });
 
   it('a stutter re-copies the run just written, in place', () => {
-    // pre-charge zero, warm first fifth, one jitter nudge to dodge a float
-    // tie: exactly one slip, at letter 79 in the cold run-out
-    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.985, 82: 0 }, 0.5));
+    // pre-charge zero, strained first fifth, one jitter nudge to dodge a float
+    // tie: exactly one slip, at letter 79 in the steady run-out
+    const out = copyStrand(COPY_STRAND, [0, 1, 1, 1, 1], rolls({ 0: 0, 1: 0.6, 81: 0.985, 82: 0 }, 0.5));
     expect(out).toBe(COPY_STRAND.slice(0, 80) + COPY_STRAND[79] + COPY_STRAND.slice(80));
   });
 
   it('a skip leaves letters the head never copied', () => {
-    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.999, 82: 0 }, 0.5));
+    const out = copyStrand(COPY_STRAND, [0, 1, 1, 1, 1], rolls({ 0: 0, 1: 0.6, 81: 0.999, 82: 0 }, 0.5));
     expect(out).toBe(COPY_STRAND.slice(0, 80) + COPY_STRAND.slice(81));
   });
 
   it('a miscopy changes exactly one letter at the slip', () => {
-    const out = copyStrand(COPY_STRAND, [1, 0, 0, 0, 0], rolls({ 0: 0, 1: 0.6, 81: 0.5, 82: 0 }, 0.5));
+    const out = copyStrand(COPY_STRAND, [0, 1, 1, 1, 1], rolls({ 0: 0, 1: 0.6, 81: 0.5, 82: 0 }, 0.5));
     expect(out.length).toBe(COPY_STRAND.length);
     const diffs = [...out].map((c, i) => (c !== COPY_STRAND[i] ? i : -1)).filter((i) => i >= 0);
     expect(diffs).toEqual([79]);
@@ -354,19 +354,19 @@ describe('copyStrand', () => {
 
   it('a stutter at the fat cap is swallowed, never copied past STRAND_MAX', () => {
     const fat = 'ACGT'.repeat(STRAND_MAX / 4);
-    // warm only the first letter: one scripted slip there, a big stutter roll
-    const trace = [...fat].map((_, i) => (i === 0 ? 1 : 0));
+    // strain only the first letter: one scripted slip there, a big stutter roll
+    const trace = [...fat].map((_, i) => (i === 0 ? 0 : 1));
     const out = copyStrand(fat, trace, rolls({ 0: 0.99, 1: 0.6, 2: 0.985, 3: 0.9 }, 0));
     expect(out.length).toBe(STRAND_MAX);
   });
 
-  it('wildness zero stills the head: a perfect clone even from a warm swell', () => {
-    expect(copyStrand(COPY_STRAND, [1], rolls({ 0: 0.99 }, 0.9), 0)).toBe(COPY_STRAND);
+  it('wildness zero stills the head: a perfect clone even from a hard swell', () => {
+    expect(copyStrand(COPY_STRAND, [0], rolls({ 0: 0.99 }, 0.9), 0)).toBe(COPY_STRAND);
   });
 
   it('the wildness dial scales the tremble: same seed, looser copy', () => {
     const drifted = (wildness: number) => {
-      const out = copyStrand(COPY_STRAND, [1], lcg(7), wildness);
+      const out = copyStrand(COPY_STRAND, [0], lcg(7), wildness);
       const n = Math.min(out.length, COPY_STRAND.length);
       let diffs = Math.abs(out.length - COPY_STRAND.length);
       for (let i = 0; i < n; i++) if (out[i] !== COPY_STRAND[i]) diffs++;
@@ -377,7 +377,7 @@ describe('copyStrand', () => {
 
   it('a skip at the thin floor is swallowed, never dropping below STRAND_MIN', () => {
     const thin = 'ACGT'.repeat(STRAND_MIN / 4);
-    const trace = [...thin].map((_, i) => (i === 0 ? 1 : 0));
+    const trace = [...thin].map((_, i) => (i === 0 ? 0 : 1));
     const out = copyStrand(thin, trace, rolls({ 0: 0.99, 1: 0.6, 2: 0.995, 3: 0.9 }, 0));
     expect(out).toBe(thin);
   });
