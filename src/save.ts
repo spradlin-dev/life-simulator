@@ -146,7 +146,9 @@ export function parseSave(raw: string): WorldSave | null {
   // genome, v8 the feeder lock, v9 stored the lock, v10 retired it, v11 the
   // age); future versions must keep MIGRATING — a pip must never be lost
   if (d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
-    if (!Array.isArray(d.pips) || d.pips.length < 1 || d.pips.length > MAX_SAVED_PIPS) return null;
+    // an empty flock is a legal world: the terrarium's extinctions must
+    // survive the reload (the meadow's laws reseed an empty boot instead)
+    if (!Array.isArray(d.pips) || d.pips.length > MAX_SAVED_PIPS) return null;
     const pips: PipSave[] = [];
     for (const entry of d.pips) {
       const pip = parseFullPip(entry);

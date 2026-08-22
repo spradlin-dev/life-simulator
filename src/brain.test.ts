@@ -46,6 +46,7 @@ function senses(overrides: Partial<Senses> = {}): Senses {
     treatDist: Infinity,
     place: 0,
     alarm: 0,
+    torpor: 0,
     ...overrides,
   };
 }
@@ -263,11 +264,26 @@ describe('chooseState', () => {
     expect(d.state).toBe('sleep');
   });
 
-  it('a berry laid beside a passed-out pip rouses it to nibble', () => {
-    const close = chooseState('sleep', calm, { food: 0, rest: 0.05, fun: 0.5 }, plain, senses({ treatDist: 80 }));
-    expect(close.state).toBe('snack');
-    const far = chooseState('sleep', calm, { food: 0, rest: 0.05, fun: 0.5 }, plain, senses({ treatDist: 400, presence: 0 }));
-    expect(far.state).toBe('sleep');
+  it('a fresh collapse can still smell most of its nose', () => {
+    // torpor 0: the rousable reach is the whole sleeper nose (480), not
+    // merely the bedside promise
+    const collapsed = { food: 0, rest: 0.05, fun: 0.5 };
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 400 })).state).toBe('snack');
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 500, presence: 0 })).state).toBe('sleep');
+  });
+
+  it('torpor closes the world down; the meadow floor holds to the very end', () => {
+    const collapsed = { food: 0, rest: 0.05, fun: 0.5 };
+    // at torpor 0.9 the body's own reach is 48 — the 120 promise carries it
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 110, torpor: 1 })).state).toBe('snack');
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 200, torpor: 0.9, presence: 0 })).state).toBe('sleep');
+  });
+
+  it('the lab holds no floor: past the last reach there is no rescue', () => {
+    const collapsed = { food: 0, rest: 0.05, fun: 0.5 };
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 40, torpor: 0.9 }), 0).state).toBe('snack');
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 40, torpor: 1, presence: 0 }), 0).state).toBe('sleep');
+    expect(chooseState('sleep', calm, collapsed, plain, senses({ treatDist: 110, torpor: 1, presence: 0 }), 0).state).toBe('sleep');
   });
 
   it('hunger pangs wake a sleeper who still has the strength', () => {
@@ -329,7 +345,9 @@ describe('chooseState', () => {
   it('rescue is a promise, not a nose: the shortest antennae still find a bedside berry', () => {
     const collapsed = { food: 0, rest: 0.05, fun: 0.5 };
     const shortNose: Genes = { ...plain, antLength: 0 };
-    expect(chooseState('sleep', calm, collapsed, shortNose, senses({ treatDist: 110 })).state).toBe('snack');
+    // even at full torpor, when the body's own reach is gone, the meadow's
+    // floor answers — whatever the antennae
+    expect(chooseState('sleep', calm, collapsed, shortNose, senses({ treatDist: 110, torpor: 1 })).state).toBe('snack');
   });
 
   it('a hovering rescuer cannot startle a collapsed pip awake', () => {

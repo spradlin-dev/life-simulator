@@ -26,6 +26,7 @@ export interface Senses {
   treatDist: number; // Infinity when no treat is down
   place: number; // memory of the ground it stands on: -1 dreaded … +1 beloved
   alarm: number; // 0..1 panic radiating from nearby fleeing pips — fear is contagious
+  torpor: number; // 0 hale … 1 at the end of a hunger fade — how far gone the body is
 }
 
 export interface Decision {
@@ -101,6 +102,10 @@ export function updateMoods(moods: Moods, genes: Genes, senses: Senses, dt: numb
   return { fear, curiosity, trust };
 }
 
+// a classic antenna's base sniff range: the antLength reach scales it,
+// hunger stretches it, torpor closes it
+const NOSE_REACH = 480;
+
 // The whole personality: a handful of if-statements, read top to bottom.
 // Genes bend each threshold, so every individual draws its lines differently;
 // a 0.5 gene sits exactly at the original tuning.
@@ -111,8 +116,11 @@ export function chooseState(
   needs: Needs,
   genes: Genes,
   senses: Senses,
+  // the world's promise under every rescue (see laws.ts); the meadow's
+  // bedside 120 is the default world, the lab passes 0
+  rescueFloor = 120,
 ): Decision {
-  const { presence, dist, speed, stillFor, treatDist } = senses;
+  const { presence, dist, speed, stillFor, treatDist, torpor } = senses;
   const decide = (state: CritterState, next = moods, startled = false): Decision => ({
     state,
     moods: next,
@@ -134,9 +142,11 @@ export function chooseState(
 
   const starving = needs.food <= 0;
   if (current === 'sleep') {
-    // a berry laid right beside a passed-out starving pip rouses it to
-    // nibble — collapse must never leave a pip beyond rescue
-    if (starving && treatDist < 120) return decide('snack');
+    // torpor shrinks a collapsed body's rousable reach toward its own face;
+    // the world's rescueFloor is the promise beneath it — the meadow holds a
+    // bedside 120 to the very end, the lab holds nothing, so there the point
+    // of no return arrives when the reach closes, never by decree
+    if (starving && treatDist < Math.max(rescueFloor, NOSE_REACH * reach * (1 - torpor))) return decide('snack');
     // hunger pangs wake a sleeper with real strength left; a collapsed body
     // stays down until it has clawed some back, so the end-game reads as slow
     // stagger-and-fall, not flicker
@@ -144,7 +154,7 @@ export function chooseState(
     // a genuinely hungry (but not collapsed) sleeper wakes for food within
     // easy reach, so a fed meadow grazes in gentle cycles instead of sleeping
     // into starvation; the collapsed keep their close-reach rescue rule above
-    if (!starving && needs.food < 0.3 && treatDist < 480 * reach) return decide('snack');
+    if (!starving && needs.food < 0.3 && treatDist < NOSE_REACH * reach) return decide('snack');
     // exhausted sleep is deep sleep: proximity can't break it (a real scare
     // still does — the fear checks above outrank sleep entirely). A collapsed
     // starving pip can't be nudged awake at all: a rescuer hovering close
@@ -166,9 +176,9 @@ export function chooseState(
   if (!starving && needs.rest < 0.15 && !midBite) return decide('sleep');
   if (!starving && !midBite && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
 
-  // hunger sharpens the nose: notice starts at a classic antenna's 480 and
-  // stretches as the belly empties
-  const noticeRange = lerp(480, 700, clamp01((0.85 - needs.food) / 0.85)) * reach;
+  // hunger sharpens the nose: notice starts at a classic antenna's base
+  // reach and stretches as the belly empties
+  const noticeRange = lerp(NOSE_REACH, 700, clamp01((0.85 - needs.food) / 0.85)) * reach;
   if (treatDist < noticeRange && needs.food < 0.85) return decide('snack');
 
   if (presence <= 0) return decide('wander');

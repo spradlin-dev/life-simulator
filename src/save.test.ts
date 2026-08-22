@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+  import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearSave,
   loadSave,
@@ -235,10 +235,13 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 1, genes: FOUNDER, trust: 'lots' }))).toBeNull();
   });
 
-  it('roster problems: missing, empty, oversized, or one bad entry', () => {
+  it('roster problems: missing, oversized, or one bad entry — but empty is legal', () => {
     expect(parseSave(JSON.stringify({ v: 4 }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 5 }))).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toBeNull();
+    // an empty flock is a legal world at any version: the terrarium's
+    // extinctions must survive the reload, never resurrect a founder
+    expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toEqual({ pips: [] });
+    expect(parseSave(serialize([]))).toEqual({ pips: [] });
     const horde = Array.from({ length: MAX_SAVED_PIPS + 1 }, () => somePip());
     expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 4, pips: Array.from({ length: MAX_SAVED_PIPS }, () => somePip()) }))).not.toBeNull();

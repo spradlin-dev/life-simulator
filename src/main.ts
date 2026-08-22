@@ -2,6 +2,7 @@ import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
 import { dietOf, hueShift, type BerryKind, type Genes } from './genes.ts';
+import { LAWS } from './laws.ts';
 import { annotate, decode, drift, FOUNDER_STRAND, type DnaStat, type StrandSpanKind } from './dna.ts';
 import {
   chooseState,
@@ -304,6 +305,8 @@ function updateTreats(dt: number): void {
 // the family portrait rule: frame every pip with breathing room, zoom clamped
 // between today's intimacy (1) and the whole-world view, and always ease there
 function updateCamera(dt: number): void {
+  // an extinct world holds the camera still — there is nothing to frame
+  if (pips.length === 0) return;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -562,6 +565,8 @@ const SAVE_KEY = SAVE_KEYS[mode];
 // never even reads the stored levers (loaded before the first wander-in so
 // a terrarium arrival honors the strangeness dial)
 const dials = mode === 'terrarium' ? loadDials() : freshDials();
+// the world's constitution, chosen with the world (see laws.ts)
+const laws = LAWS[mode];
 
 // the same pips, and how far you got with them, survive the refresh
 const saved = loadSave(SAVE_KEY);
@@ -579,6 +584,9 @@ if (saved) {
   pips.push(wanderIn(world.w / 2, world.h / 2));
   saveWorld();
 }
+// a meadow honors its no-empty promise even against a tampered-empty save;
+// an extinct terrarium save is honored exactly as it lies
+if (pips.length === 0 && laws.reseedOnEmpty) pips.push(wanderIn(world.w / 2, world.h / 2));
 
 // a knock on the meadow gate: wanderers walk in mid-day, not factory-new,
 // so even a fresh crowd is unsynchronized from its first minute
@@ -595,12 +603,14 @@ function welcomeWanderers(count: number): void {
     pips.push(pip);
   }
   if (pips.length === before) return; // a full meadow: nobody arrived, nothing changed
+  // a wanderer into an extinct dish becomes the one worth watching
+  if (!selectedPip) selectedPip = pips[before];
   flockVersion++;
   sinceSave = 0;
   saveWorld();
 }
 
-let selectedPip: Pip = pips[0];
+let selectedPip: Pip | null = pips[0] ?? null;
 // bumped on any population change; roster AND census rebuild against it
 let flockVersion = 0;
 
@@ -688,6 +698,10 @@ function sensesFor(pip: Pip): Senses {
     treatDist: treat ? treat.dist : Infinity,
     place: placeAt(pip.places, pip.x / world.w, pip.y / world.h),
     alarm: alarmNear(pip),
+    // torpor tracks the VISIBLE fade window, so the reach never narrows
+    // before the watcher can see the body going — collapsed-but-solid keeps
+    // its whole nose; the shrinking happens across the fade they can watch
+    torpor: clamp01((pip.starvingFor - STARVE_FADE_AT) / (STARVE_POOF_AT - STARVE_FADE_AT)),
   };
 }
 
@@ -1409,6 +1423,13 @@ dnaPanel.append(dnaTitle, dnaStrand, dnaLegend);
 // bodies in their trait's hue, junk dimmed, dormant near-tags shimmering
 let dnaShownStrand = '';
 function updateDnaPanel(): void {
+  if (!selectedPip) {
+    // an extinct dish still opens its ledger; there is just no one to read
+    dnaTitle.textContent = '—';
+    dnaShownStrand = '';
+    dnaStrand.replaceChildren();
+    return;
+  }
   dnaTitle.textContent = `${selectedPip.name} · ${selectedPip.strand.length} bases`;
   if (dnaShownStrand === selectedPip.strand) return;
   dnaShownStrand = selectedPip.strand;
@@ -1664,7 +1685,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Tab' && e.target instanceof HTMLElement && e.target !== document.body) return;
   e.preventDefault();
   const step = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
-  const idx = Math.max(0, pips.indexOf(selectedPip));
+  if (pips.length === 0) return;
+  const idx = selectedPip ? Math.max(0, pips.indexOf(selectedPip)) : 0;
   selectedPip = pips[(idx + step + pips.length) % pips.length];
 });
 
@@ -1784,7 +1806,7 @@ function simulate(dt: number, t: number): void {
     pip.moods = updateMoods(pip.moods, expressed, senses, dt);
     if (pip.moods.fear > 0.3 && beforeFear <= 0.3) showEmote(pip, '!');
 
-    const decision = chooseState(pip.state, pip.moods, pip.needs, expressed, senses);
+    const decision = chooseState(pip.state, pip.moods, pip.needs, expressed, senses, laws.rescueFloor);
     pip.moods = decision.moods;
     if (decision.startled) showEmote(pip, '!');
     if (decision.state !== pip.state) {
@@ -1877,14 +1899,16 @@ function simulate(dt: number, t: number): void {
       spawnSparkles(pip);
       pips.splice(pips.indexOf(pip), 1);
     }
-    // the meadow never stays empty: a new little one wanders in
-    if (pips.length === 0) {
+    // the meadow never stays empty: a new little one wanders in. The lab
+    // keeps no such promise — an extinct terrarium stays extinct until its
+    // keeper starts a fresh dish
+    if (pips.length === 0 && laws.reseedOnEmpty) {
       const spot = randomSpot();
       const arrival = wanderIn(spot.x, spot.y);
       showEmote(arrival, '✧');
       pips.push(arrival);
     }
-    if (!pips.includes(selectedPip)) selectedPip = pips[0];
+    if (!selectedPip || !pips.includes(selectedPip)) selectedPip = pips[0] ?? null;
     flockVersion++;
     saveQueued = true;
   }
