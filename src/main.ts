@@ -823,7 +823,12 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
           pip.places = markPlace(pip.places, target.treat.x / world.w, target.treat.y / world.h, 0.2);
           treats.splice(treats.indexOf(target.treat), 1);
           pip.needs = eat(pip.needs);
-          pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
+          // trust is food-association, and it attaches to the feeder: only
+          // the watcher's own gift builds the bond — a wild berry feeds the
+          // body, not the relationship
+          if (target.treat.kind === 'gift') {
+            pip.moods = { ...pip.moods, trust: clamp01(pip.moods.trust + 0.03) };
+          }
           pip.munchFor = 0;
           pip.munchTarget = null;
           showEmote(pip, '♥');
