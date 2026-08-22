@@ -51,8 +51,13 @@ describe('tickNeeds', () => {
   });
 
   it('midpoint tempo genes reproduce the original rates exactly', () => {
+    // the food anchor moved from stillness to the wander speed cap when
+    // movement began burning belly: at 60 px/s the identity
+    // (1 + 60/600)/528 = 1/480 reproduces the pre-movement-cost drain
+    const ambling = tickNeeds(FRESH_NEEDS, 'wander', 60, 1, FOUNDER);
+    expect(ambling.food).toBeCloseTo(1 - 1 / 480, 10);
     const after = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER);
-    expect(after.food).toBeCloseTo(1 - 1 / 480, 10);
+    expect(after.food).toBeCloseTo(1 - 1 / 528, 10);
     expect(after.rest).toBeCloseTo(1 - 1 / 300, 10);
     expect(after.fun).toBeCloseTo(0.7 - 1 / 360, 10);
     // mid rest keeps the cascade's verve factor neutral, so this pin still
@@ -69,6 +74,14 @@ describe('tickNeeds', () => {
     expect(refill(0)).toBeCloseTo(0.5 / 25, 10);
   });
 
+  it('movement burns food like it burns rest', () => {
+    const still = run(FRESH_NEEDS, 'wander', 0, 60);
+    const dashing = run(FRESH_NEEDS, 'flee', 300, 60);
+    expect(dashing.food).toBeLessThan(still.food);
+    // sleep sits at zero speed: a night costs no more belly than a still day
+    expect(run(FRESH_NEEDS, 'sleep', 0, 60).food).toBeCloseTo(still.food, 10);
+  });
+
   it('the cascade: hunger wears the body down faster, but only real hunger', () => {
     const drained = (food: number) =>
       1 - tickNeeds({ food, rest: 1, fun: 0.7 }, 'wander', 0, 1, FOUNDER).rest;
@@ -79,7 +92,7 @@ describe('tickNeeds', () => {
 
   it('the appetite dial multiplies belly drain exactly and touches nothing else', () => {
     const lean = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 10);
-    expect(lean.food).toBeCloseTo(1 - 10 / 480, 10);
+    expect(lean.food).toBeCloseTo(1 - 10 / 528, 10);
     expect(lean.rest).toBeCloseTo(1 - 1 / 300, 10);
     expect(lean.fun).toBeCloseTo(0.7 - 1 / 360, 10);
     expect(tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1)).toEqual(
@@ -90,7 +103,7 @@ describe('tickNeeds', () => {
   it('the weariness dial multiplies tiring exactly, and never sleep recovery', () => {
     const worn = tickNeeds(FRESH_NEEDS, 'wander', 0, 1, FOUNDER, 1, 10);
     expect(worn.rest).toBeCloseTo(1 - 10 / 300, 10);
-    expect(worn.food).toBeCloseTo(1 - 1 / 480, 10);
+    expect(worn.food).toBeCloseTo(1 - 1 / 528, 10);
     expect(worn.fun).toBeCloseTo(0.7 - 1 / 360, 10);
     const asleep = { food: 1, rest: 0.5, fun: 0.7 };
     expect(tickNeeds(asleep, 'sleep', 0, 1, FOUNDER, 1, 10).rest).toEqual(

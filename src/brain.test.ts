@@ -300,6 +300,38 @@ describe('chooseState', () => {
     expect(chooseState('snack', calm, { food: 0.25, rest: 0.1, fun: 0.5 }, plain, afk).state).toBe('snack');
   });
 
+  it('the antennae are the nose: length sets how far a treat registers', () => {
+    const longNose: Genes = { ...plain, antLength: 1 };
+    const shortNose: Genes = { ...plain, antLength: 0 };
+    const peckish = { ...fed, food: 0.8 };
+    // a classic nose at food 0.8 reaches ~493; long stretches it to ~641,
+    // short shrinks it to ~345
+    expect(chooseState('wander', calm, peckish, plain, senses({ treatDist: 550 })).state).not.toBe('snack');
+    expect(chooseState('wander', calm, peckish, longNose, senses({ treatDist: 550 })).state).toBe('snack');
+    expect(chooseState('wander', calm, peckish, plain, senses({ treatDist: 400 })).state).toBe('snack');
+    expect(chooseState('wander', calm, peckish, shortNose, senses({ treatDist: 400 })).state).not.toBe('snack');
+  });
+
+  it('a midpoint antenna keeps the original notice range exactly', () => {
+    const empty = { food: 0, rest: 1, fun: 0.5 };
+    // a starving classic nose stretches to exactly the original 700
+    expect(chooseState('wander', calm, empty, plain, senses({ treatDist: 699 })).state).toBe('snack');
+    expect(chooseState('wander', calm, empty, plain, senses({ treatDist: 701 })).state).not.toBe('snack');
+  });
+
+  it('long antennae smell breakfast from farther away in sleep too', () => {
+    const dozing = { food: 0.25, rest: 0.6, fun: 0.5 };
+    const longNose: Genes = { ...plain, antLength: 1 };
+    expect(chooseState('sleep', calm, dozing, plain, senses({ presence: 0, treatDist: 550 })).state).toBe('sleep');
+    expect(chooseState('sleep', calm, dozing, longNose, senses({ presence: 0, treatDist: 550 })).state).toBe('snack');
+  });
+
+  it('rescue is a promise, not a nose: the shortest antennae still find a bedside berry', () => {
+    const collapsed = { food: 0, rest: 0.05, fun: 0.5 };
+    const shortNose: Genes = { ...plain, antLength: 0 };
+    expect(chooseState('sleep', calm, collapsed, shortNose, senses({ treatDist: 110 })).state).toBe('snack');
+  });
+
   it('a hovering rescuer cannot startle a collapsed pip awake', () => {
     const d = chooseState('sleep', calm, { food: 0, rest: 0.2, fun: 0.5 }, plain, senses({ presence: 1, dist: 100 }));
     expect(d.state).toBe('sleep');

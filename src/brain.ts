@@ -126,6 +126,8 @@ export function chooseState(
   const snugglesAt = lerp(0.82, 0.62, genes.clinginess);
   const followsAt = lerp(0.65, 0.45, genes.clinginess);
   const curiousAt = lerp(0.55, 0.35, genes.nosiness);
+  // the antennae are the nose: length sets how far berries register
+  const reach = lerp(0.7, 1.3, genes.antLength);
 
   if (moods.fear > cowersAt) return decide('cower');
   if (moods.fear > fleesAt) return decide('flee');
@@ -142,7 +144,7 @@ export function chooseState(
     // a genuinely hungry (but not collapsed) sleeper wakes for food within
     // easy reach, so a fed meadow grazes in gentle cycles instead of sleeping
     // into starvation; the collapsed keep their close-reach rescue rule above
-    if (!starving && needs.food < 0.3 && treatDist < 480) return decide('snack');
+    if (!starving && needs.food < 0.3 && treatDist < 480 * reach) return decide('snack');
     // exhausted sleep is deep sleep: proximity can't break it (a real scare
     // still does — the fear checks above outrank sleep entirely). A collapsed
     // starving pip can't be nudged awake at all: a rescuer hovering close
@@ -164,9 +166,9 @@ export function chooseState(
   if (!starving && needs.rest < 0.15 && !midBite) return decide('sleep');
   if (!starving && !midBite && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
 
-  // hunger sharpens the nose: the notice range starts at today's 480 and
+  // hunger sharpens the nose: notice starts at a classic antenna's 480 and
   // stretches as the belly empties
-  const noticeRange = lerp(480, 700, clamp01((0.85 - needs.food) / 0.85));
+  const noticeRange = lerp(480, 700, clamp01((0.85 - needs.food) / 0.85)) * reach;
   if (treatDist < noticeRange && needs.food < 0.85) return decide('snack');
 
   if (presence <= 0) return decide('wander');

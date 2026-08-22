@@ -27,8 +27,10 @@ const ENGAGING: Record<CritterState, boolean> = {
   sleep: false,
 };
 
-// seconds for a classic pip's full belly to empty
-const FOOD_DRAIN_S = 480;
+// a classic pip at its full wandering pace (60 px/s, the wander speed cap)
+// empties a belly in the original 480s — the identity (1 + 60/600) / 528
+// = 1/480 re-anchors the food economy now that movement burns belly too
+const FOOD_DRAIN_S = 528;
 
 // all rates are per second of sim time; a hidden tab pauses the loop, so a pip
 // is only ever hungry or tired because of time actually spent together.
@@ -57,7 +59,7 @@ export function tickNeeds(
   const verve = lerp(0.5, 1.5, needs.rest);
   const famished = lerp(1.75, 1, clamp01(needs.food / 0.35));
   return {
-    food: clamp01(needs.food - (dt / FOOD_DRAIN_S) * appetite * hungerScale),
+    food: clamp01(needs.food - (dt / FOOD_DRAIN_S) * (1 + speed / 600) * appetite * hungerScale),
     rest: clamp01(
       asleep
         ? needs.rest + dt / 45
