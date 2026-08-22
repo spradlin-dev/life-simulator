@@ -29,7 +29,7 @@ import {
 } from './dispositions.ts';
 import { createInput } from './input.ts';
 import { makeName } from './names.ts';
-import { clearSave, loadSave, MAX_SAVED_PIPS, SAVE_KEYS, storeSave, type LivePip } from './save.ts';
+import { clearSave, loadSave, MAX_SAVED_PIPS, SAVE_KEYS, storeSave, type FloraSave, type LivePip } from './save.ts';
 import { splitChance, splitOutcome, SPLIT_COOLDOWN } from './mitosis.ts';
 import { DIAL_FIELDS, DIAL_SPECS, freshDials, loadDials, storeDials, type Dials } from './dials.ts';
 
@@ -235,20 +235,33 @@ function dropTreatInView(): void {
 }
 
 // ------------------------------------------------------- the living meadow
-// berries grow on their own, each color at a steady rate. The growth rate IS
-// the soft population cap (about 3.3 pips per berry-per-minute, per color a
-// flock can eat), so diet flips unlock real growth: a red-only meadow
-// settles near 200, each discovered color adds another 200
+// food is a loop, not a faucet: pips eat berries and carry the seeds in
+// their gut, fallen fruit rots where it lies and sometimes takes root, and
+// a thin wind-rain from beyond the meadow keeps every color alive somewhere.
+// The ground's carrying capacity — CELL_CAP roots per color per cell — is
+// the population ceiling now: land, not a spawn rate. The Phase D sim pins
+// a red-only flock near 180, each discovered color adding about as much
 const BERRY_KINDS: readonly BerryKind[] = ['red', 'gold', 'blue'];
-const GROW_PER_MIN = 60;
-// standing crop if nobody eats is rate x lifetime (60/min x 60s); the cap
-// only exists so an empty meadow cannot slowly fill with fruit
-const AMBIENT_CAP = 80;
-// the world in coarse cells: berries sprout where berries are missing, so a
-// grazed-out middle refills in the middle, never just at the far edges
+const SEEDS_PER_BERRY = 2;
+const GUT_MIN_S = 30;
+const GUT_MAX_S = 90;
+const SPROUT_S = 90;
+const CELL_CAP = 3;
+const ROT_P = 0.55;
+// the wind's propagule pressure: seeds arriving from beyond the meadow
+const WIND_PER_MIN = 6;
+// the world in coarse cells: the unit of ground a root claims
 const GRID_COLS = 8;
 const GRID_ROWS = 5;
-const growTimers: Record<BerryKind, number> = { red: 0, gold: 0, blue: 0 };
+const windTimers: Record<BerryKind, number> = { red: 0, gold: 0, blue: 0 };
+
+interface Sprout {
+  x: number;
+  y: number;
+  age: number;
+  kind: BerryKind;
+}
+const sprouts: Sprout[] = [];
 
 function cellOf(x: number, y: number): number {
   const col = Math.min(GRID_COLS - 1, Math.floor((x / world.w) * GRID_COLS));
@@ -256,48 +269,41 @@ function cellOf(x: number, y: number): number {
   return row * GRID_COLS + col;
 }
 
-function growBerry(kind: BerryKind): void {
-  const counts = new Array<number>(GRID_COLS * GRID_ROWS).fill(0);
-  let total = 0;
-  for (const treat of treats) {
-    if (treat.kind !== kind) continue;
-    counts[cellOf(treat.x, treat.y)]++;
-    total++;
-  }
-  if (total >= AMBIENT_CAP) return;
-  // deficit-weighted, and pulled toward the mouths that can eat this color:
-  // empty cells draw growth, cells where matching diets roam draw much more —
-  // deficit alone scattered most fruit beyond any nose, expiring unseen
-  const eaters = new Array<number>(GRID_COLS * GRID_ROWS).fill(0);
-  for (const pip of pips) {
-    if (dietOf(pip.genes) === kind) eaters[cellOf(pip.x, pip.y)]++;
-  }
-  const fullest = Math.max(...counts);
-  const weights = counts.map((n, i) => (fullest - n + 1) * (1 + eaters[i]));
-  let pick = Math.random() * weights.reduce((a, b) => a + b, 0);
-  let cell = weights.length - 1;
-  for (let i = 0; i < weights.length; i++) {
-    pick -= weights[i];
-    if (pick <= 0) {
-      cell = i;
-      break;
-    }
-  }
-  const col = cell % GRID_COLS;
-  const row = Math.floor(cell / GRID_COLS);
-  treats.push({
-    x: Math.min(world.w - 30, Math.max(30, ((col + Math.random()) / GRID_COLS) * world.w)),
-    y: Math.min(world.h - 30, Math.max(30, ((row + Math.random()) / GRID_ROWS) * world.h)),
-    age: 0,
-    eater: null,
-    kind,
-  });
+// one cell of ground only feeds so many roots of one color; a seed that
+// lands on full ground is simply lost — that loss IS the ceiling
+function cellHasRoom(kind: BerryKind, x: number, y: number): boolean {
+  const cell = cellOf(x, y);
+  let n = 0;
+  for (const t of treats) if (t.kind === kind && cellOf(t.x, t.y) === cell) n++;
+  for (const s of sprouts) if (s.kind === kind && cellOf(s.x, s.y) === cell) n++;
+  return n < CELL_CAP;
+}
+
+function plantSprout(kind: BerryKind, x: number, y: number): void {
+  const at = clampToWorld(x, y, 30);
+  if (!cellHasRoom(kind, at.x, at.y)) return;
+  sprouts.push({ x: at.x, y: at.y, age: 0, kind });
 }
 
 function updateTreats(dt: number): void {
   for (let i = treats.length - 1; i >= 0; i--) {
     treats[i].age += dt;
-    if (treats[i].age > TREAT_LIFE) treats.splice(i, 1);
+    if (treats[i].age > TREAT_LIFE) {
+      const gone = treats.splice(i, 1)[0];
+      // fallen fruit seeds the ground it rots on (with a little roll for
+      // spread) — how groves of a color nobody eats yet wait for the
+      // lineage that will
+      if (gone.kind !== 'gift' && Math.random() < ROT_P) {
+        plantSprout(gone.kind, gone.x + (Math.random() - 0.5) * 120, gone.y + (Math.random() - 0.5) * 120);
+      }
+    }
+  }
+  for (let i = sprouts.length - 1; i >= 0; i--) {
+    sprouts[i].age += dt;
+    if (sprouts[i].age >= SPROUT_S) {
+      const s = sprouts.splice(i, 1)[0];
+      treats.push({ x: s.x, y: s.y, age: 0, eater: null, kind: s.kind });
+    }
   }
   treatButton.disabled = giftCount() >= TREAT_CAP;
 }
@@ -399,6 +405,9 @@ interface Pip {
   // why a poof is underway: only a hunger fade can be cancelled by food
   fading: 'hunger' | 'age' | null;
   wanderTarget: Vec | null;
+  // seeds in transit: eaten berries ride the gut and are sown where the
+  // pip happens to stand when they drop
+  gut: { kind: BerryKind; dropIn: number }[];
   pauseFor: number;
   blinkIn: number;
   emote: string;
@@ -440,6 +449,7 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     poofFor: 0,
     fading: null,
     wanderTarget: null,
+    gut: [],
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
     emote: '',
@@ -529,7 +539,18 @@ function clampToWorld(x: number, y: number, margin = 26): Vec {
 const pips: Pip[] = [];
 
 function saveWorld(): void {
-  storeSave(snapshotWorld(), SAVE_KEY);
+  storeSave(snapshotWorld(), SAVE_KEY, floraNow());
+}
+
+// the ground as the save layer sees it: every ambient berry and sprout;
+// gifts melt away with the session, and gut seeds are lost in transit
+function floraNow(): FloraSave[] {
+  const out: FloraSave[] = [];
+  for (const t of treats) {
+    if (t.kind !== 'gift') out.push({ kind: t.kind, x: t.x, y: t.y, age: t.age, sprout: false });
+  }
+  for (const s of sprouts) out.push({ kind: s.kind, x: s.x, y: s.y, age: s.age, sprout: true });
+  return out;
 }
 
 function snapshotWorld(): LivePip[] {
@@ -582,11 +603,46 @@ if (saved) {
   }
 } else {
   pips.push(wanderIn(world.w / 2, world.h / 2));
-  saveWorld();
 }
 // a meadow honors its no-empty promise even against a tampered-empty save;
 // an extinct terrarium save is honored exactly as it lies
 if (pips.length === 0 && laws.reseedOnEmpty) pips.push(wanderIn(world.w / 2, world.h / 2));
+
+// dress the ground: a v12 world carries its own flora; older and fresh
+// worlds warm-start settled, so nobody ever reloads into a famine
+if (saved?.flora) {
+  for (const f of saved.flora) {
+    const at = clampToWorld(f.x, f.y, 30);
+    if (f.sprout) sprouts.push({ x: at.x, y: at.y, age: Math.min(f.age, SPROUT_S), kind: f.kind });
+    else treats.push({ x: at.x, y: at.y, age: Math.min(f.age, TREAT_LIFE), eater: null, kind: f.kind });
+  }
+} else {
+  // each pip's home ground gets a settled stand of its own food, and the
+  // wind gets credit for a few groves of the colors nobody here eats yet
+  for (const pip of pips) {
+    const diet = dietOf(pip.genes);
+    for (let i = 0; i < CELL_CAP; i++) {
+      const x = pip.x + (Math.random() - 0.5) * 360;
+      const y = pip.y + (Math.random() - 0.5) * 360;
+      if (Math.random() < 0.4) {
+        plantSprout(diet, x, y);
+      } else {
+        const at = clampToWorld(x, y, 30);
+        if (cellHasRoom(diet, at.x, at.y)) {
+          treats.push({ x: at.x, y: at.y, age: Math.random() * 40, eater: null, kind: diet });
+        }
+      }
+    }
+  }
+  for (const kind of BERRY_KINDS) {
+    for (let i = 0; i < 12; i++) {
+      plantSprout(kind, 30 + Math.random() * (world.w - 60), 30 + Math.random() * (world.h - 60));
+    }
+  }
+}
+// the very first save waits until the ground is dressed, so a first-minute
+// refresh never reloads onto bare earth
+if (!saved) saveWorld();
 
 // a knock on the meadow gate: wanderers walk in mid-day, not factory-new,
 // so even a fresh crowd is unsynchronized from its first minute
@@ -837,6 +893,13 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
           pip.places = markPlace(pip.places, target.treat.x / world.w, target.treat.y / world.h, 0.2);
           treats.splice(treats.indexOf(target.treat), 1);
           pip.needs = eat(pip.needs);
+          // an ambient berry's seeds ride along in the gut, to be sown
+          // wherever the eater wanders over the next minute or so
+          if (target.treat.kind !== 'gift') {
+            for (let s = 0; s < SEEDS_PER_BERRY; s++) {
+              pip.gut.push({ kind: target.treat.kind, dropIn: GUT_MIN_S + Math.random() * (GUT_MAX_S - GUT_MIN_S) });
+            }
+          }
           // trust is food-association, and it attaches to the feeder: only
           // the watcher's own gift builds the bond — a wild berry feeds the
           // body, not the relationship
@@ -981,6 +1044,23 @@ const BERRY_COLORS: Record<BerryKind | 'gift', string> = {
 };
 
 function drawTreats(t: number): void {
+  // sprouts first, under the ripe fruit: a nub swelling toward berryhood,
+  // the queue of coming food visible on the ground
+  for (const s of sprouts) {
+    const grown = s.age / SPROUT_S;
+    ctx.globalAlpha = 0.3 + grown * 0.5;
+    ctx.fillStyle = BERRY_COLORS[s.kind];
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 1.5 + grown * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#7fce9a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x, s.y - 3 - grown * 3);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   for (const treat of treats) {
     const pop = Math.min(1, treat.age / 0.3);
     const fade = Math.min(1, (TREAT_LIFE - treat.age) / 5);
@@ -1489,7 +1569,7 @@ const DIAL_LABELS: Record<keyof Dials, string> = {
   wildness: 'wildness',
   appetite: 'appetite',
   weariness: 'weariness',
-  feeder: 'berry growth',
+  feeder: 'seed drift',
   longevity: 'longevity',
   strangeness: 'strangeness',
 };
@@ -1757,14 +1837,14 @@ function simulate(dt: number, t: number): void {
     rainTimer = 0;
   }
 
-  // the meadow feeds itself: each berry color grows at its own steady drip,
-  // and the growth dial retunes the whole food economy (with it, the size
-  // every flock settles at)
+  // the wind sows: a thin seed-rain from beyond the meadow keeps every
+  // color alive somewhere, waiting for the lineage that can eat it. The
+  // dial turns the wind, never the flock's own seed loop
   for (const kind of BERRY_KINDS) {
-    growTimers[kind] -= dt;
-    while (growTimers[kind] <= 0) {
-      growTimers[kind] += 60 / (GROW_PER_MIN * dials.feeder);
-      growBerry(kind);
+    windTimers[kind] -= dt;
+    while (windTimers[kind] <= 0) {
+      windTimers[kind] += 60 / (WIND_PER_MIN * dials.feeder);
+      plantSprout(kind, 30 + Math.random() * (world.w - 60), 30 + Math.random() * (world.h - 60));
     }
   }
 
@@ -1819,6 +1899,15 @@ function simulate(dt: number, t: number): void {
       }
     }
     pip.stateTime += dt;
+
+    // digestion sows the meadow: a seed drops wherever the pip stands
+    for (let g = pip.gut.length - 1; g >= 0; g--) {
+      pip.gut[g].dropIn -= dt;
+      if (pip.gut[g].dropIn <= 0) {
+        const seed = pip.gut.splice(g, 1)[0];
+        plantSprout(seed.kind, pip.x, pip.y);
+      }
+    }
 
     pip.needs = tickNeeds(pip.needs, pip.state, Math.hypot(pip.vx, pip.vy), dt, expressed, dials.appetite, dials.weariness);
     const happiness = happinessOf(pip.needs, pip.moods.trust, pip.moods.fear);

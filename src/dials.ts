@@ -10,7 +10,7 @@ export interface Dials {
   wildness: number; // multiplies the copyist's tremble
   appetite: number; // multiplies belly drain
   weariness: number; // multiplies how fast awake bodies tire
-  feeder: number; // multiplies the ambient berry growth
+  feeder: number; // multiplies the seed drift arriving from beyond the world
   longevity: number; // multiplies every lifespan
   strangeness: number; // drift generations a wander-in arrives with
 }

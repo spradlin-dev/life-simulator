@@ -2,6 +2,7 @@
 import {
   clearSave,
   loadSave,
+  MAX_FLORA,
   MAX_SAVED_PIPS,
   parseSave,
   SAVE_KEYS,
@@ -63,14 +64,51 @@ describe('save round-trip', () => {
       places: freshPlaces(),
       generation: 0,
     });
-    expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b] });
+    expect(parseSave(serialize([a, b]))).toEqual({ pips: [a, b], flora: [] });
   });
 
   it('stamps the current version and decoder on every save it writes', () => {
     const written = JSON.parse(serialize([somePip()]));
-    expect(written.v).toBe(11);
+    expect(written.v).toBe(12);
     expect(written.decoder).toBe(DECODER_VERSION);
     expect('lock' in written).toBe(false);
+    expect(Array.isArray(written.flora)).toBe(true);
+  });
+
+  it('the ground rides the save: flora round-trips, and older worlds get null', () => {
+    const bush = { kind: 'red', x: 300, y: 200, age: 12, sprout: false } as const;
+    const shoot = { kind: 'gold', x: 40, y: 90, age: 3, sprout: true } as const;
+    expect(parseSave(serialize([somePip()], [bush, shoot]))!.flora).toEqual([bush, shoot]);
+    // pre-flora saves say null, so the game knows to warm-start the meadow
+    expect(parseSave(JSON.stringify({ v: 11, decoder: DECODER_VERSION, pips: [somePip()] }))!.flora).toBeNull();
+  });
+
+  it('flora is forgiving: bad plants are dropped, wild ages clamped, the save survives', () => {
+    const parsed = parseSave(
+      JSON.stringify({
+        v: 12,
+        decoder: DECODER_VERSION,
+        pips: [somePip()],
+        flora: [
+          { kind: 'plaid', x: 1, y: 1, age: 1, sprout: false },
+          { kind: 'red', x: Infinity, y: 1, age: 1, sprout: false },
+          'gibberish',
+          { kind: 'blue', x: 5, y: 5, age: 99999, sprout: true },
+        ],
+      }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed!.flora).toEqual([{ kind: 'blue', x: 5, y: 5, age: 600, sprout: true }]);
+  });
+
+  it('the flora tamper belt: reader and writer both cap at MAX_FLORA', () => {
+    const plant = { kind: 'red', x: 1, y: 1, age: 1, sprout: false } as const;
+    const jungle = Array.from({ length: MAX_FLORA + 50 }, () => plant);
+    expect(JSON.parse(serialize([somePip()], jungle)).flora.length).toBe(MAX_FLORA);
+    const parsed = parseSave(
+      JSON.stringify({ v: 12, decoder: DECODER_VERSION, pips: [somePip()], flora: jungle }),
+    );
+    expect(parsed!.flora!.length).toBe(MAX_FLORA);
   });
 
   it('age survives the round-trip exactly, and mangled ages scatter into midlife', () => {
@@ -222,7 +260,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 12, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 13, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -240,8 +278,8 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave(JSON.stringify({ v: 5 }))).toBeNull();
     // an empty flock is a legal world at any version: the terrarium's
     // extinctions must survive the reload, never resurrect a founder
-    expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toEqual({ pips: [] });
-    expect(parseSave(serialize([]))).toEqual({ pips: [] });
+    expect(parseSave(JSON.stringify({ v: 4, pips: [] }))).toEqual({ pips: [], flora: null });
+    expect(parseSave(serialize([]))).toEqual({ pips: [], flora: [] });
     const horde = Array.from({ length: MAX_SAVED_PIPS + 1 }, () => somePip());
     expect(parseSave(JSON.stringify({ v: 4, pips: horde }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 4, pips: Array.from({ length: MAX_SAVED_PIPS }, () => somePip()) }))).not.toBeNull();

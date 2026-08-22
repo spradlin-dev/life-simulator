@@ -1,5 +1,5 @@
 import { clamp01 } from './math.ts';
-import { GENE_FIELDS, sanitizeGenes, type Genes } from './genes.ts';
+import { GENE_FIELDS, sanitizeGenes, type BerryKind, type Genes } from './genes.ts';
 import { DECODER_VERSION, encode, isValidStrand } from './dna.ts';
 import { makeName, sanitizeName } from './names.ts';
 import { FRESH_NEEDS, NEED_FIELDS, type Needs } from './needs.ts';
@@ -41,6 +41,17 @@ export interface PipSave {
 
 export interface WorldSave {
   pips: PipSave[];
+  // the ground itself: ambient berries and growing sprouts. null marks a
+  // pre-flora save — the game warm-starts a settled meadow instead
+  flora: FloraSave[] | null;
+}
+
+export interface FloraSave {
+  kind: BerryKind; // ambient colors only — a gift is never flora
+  x: number;
+  y: number;
+  age: number;
+  sprout: boolean;
 }
 
 // one storage slot per world: the meadow is the real game, the terrarium is
@@ -54,10 +65,42 @@ export type SaveKey = (typeof SAVE_KEYS)[keyof typeof SAVE_KEYS];
 // economy became the real population limit this sits far above any reachable
 // flock — it is a tamper belt, not a gameplay wall
 export const MAX_SAVED_PIPS = 3000;
+// tamper belt for the ground: real meadows hold a few hundred plants at most
+export const MAX_FLORA = 1000;
 
-export function serialize(pips: readonly LivePip[]): string {
+export function serialize(pips: readonly LivePip[], flora: readonly FloraSave[] = []): string {
   // the writer must never emit a roster its own reader would reject
-  return JSON.stringify({ v: 11, decoder: DECODER_VERSION, pips: pips.slice(0, MAX_SAVED_PIPS) });
+  return JSON.stringify({
+    v: 12,
+    decoder: DECODER_VERSION,
+    pips: pips.slice(0, MAX_SAVED_PIPS),
+    flora: flora.slice(0, MAX_FLORA),
+  });
+}
+
+const BERRY_KIND_SET: Record<BerryKind, true> = { red: true, gold: true, blue: true };
+
+// the ground is forgiving where pips are strict: flora regrows, so a bad
+// entry is dropped rather than sinking the save it rode in on
+function parseFlora(raw: unknown): FloraSave[] {
+  if (!Array.isArray(raw)) return [];
+  const out: FloraSave[] = [];
+  for (const e of raw.slice(0, MAX_FLORA)) {
+    if (typeof e !== 'object' || e === null) continue;
+    const f = e as Record<string, unknown>;
+    if (typeof f.kind !== 'string' || !(f.kind in BERRY_KIND_SET)) continue;
+    if (typeof f.x !== 'number' || !Number.isFinite(f.x)) continue;
+    if (typeof f.y !== 'number' || !Number.isFinite(f.y)) continue;
+    if (typeof f.age !== 'number' || !Number.isFinite(f.age)) continue;
+    out.push({
+      kind: f.kind as BerryKind,
+      x: f.x,
+      y: f.y,
+      age: Math.min(600, Math.max(0, f.age)),
+      sprout: f.sprout === true,
+    });
+  }
+  return out;
 }
 
 function allFiniteNumbers(obj: Record<string, unknown>, fields: readonly string[]): boolean {
@@ -145,7 +188,7 @@ export function parseSave(raw: string): WorldSave | null {
   // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
   // genome, v8 the feeder lock, v9 stored the lock, v10 retired it, v11 the
   // age); future versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  if (d.v === 12 || d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     // an empty flock is a legal world: the terrarium's extinctions must
     // survive the reload (the meadow's laws reseed an empty boot instead)
     if (!Array.isArray(d.pips) || d.pips.length > MAX_SAVED_PIPS) return null;
@@ -178,7 +221,8 @@ export function parseSave(raw: string): WorldSave | null {
       pips.push({ ...pip, strand, generation, name, age });
     }
     // v9's feeder lock is retired: whatever a save says about it is ignored
-    return { pips };
+    // flora arrived in v12; older worlds get null and a warm-started ground
+    return { pips, flora: d.v === 12 ? parseFlora(d.flora) : null };
   }
   if (d.v !== 1 && d.v !== 2 && d.v !== 3) return null;
 
@@ -214,6 +258,7 @@ export function parseSave(raw: string): WorldSave | null {
         age: Math.random() * 1440,
       },
     ],
+    flora: null,
   };
 }
 
@@ -234,9 +279,9 @@ export function clearSave(key: SaveKey): void {
   }
 }
 
-export function storeSave(pips: readonly LivePip[], key: SaveKey): void {
+export function storeSave(pips: readonly LivePip[], key: SaveKey, flora: readonly FloraSave[] = []): void {
   try {
-    localStorage.setItem(key, serialize(pips));
+    localStorage.setItem(key, serialize(pips, flora));
   } catch {
     // storage unavailable (private mode, quota) — the pips just live for the session
   }
