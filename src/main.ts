@@ -264,10 +264,15 @@ function growBerry(kind: BerryKind): void {
     total++;
   }
   if (total >= AMBIENT_CAP) return;
-  // deficit-weighted, never greedy: the emptiest cells draw most of the
-  // growth, but berries still scatter enough to read as nature
+  // deficit-weighted, and pulled toward the mouths that can eat this color:
+  // empty cells draw growth, cells where matching diets roam draw much more —
+  // deficit alone scattered most fruit beyond any nose, expiring unseen
+  const eaters = new Array<number>(GRID_COLS * GRID_ROWS).fill(0);
+  for (const pip of pips) {
+    if (dietOf(pip.genes) === kind) eaters[cellOf(pip.x, pip.y)]++;
+  }
   const fullest = Math.max(...counts);
-  const weights = counts.map((n) => fullest - n + 1);
+  const weights = counts.map((n, i) => (fullest - n + 1) * (1 + eaters[i]));
   let pick = Math.random() * weights.reduce((a, b) => a + b, 0);
   let cell = weights.length - 1;
   for (let i = 0; i < weights.length; i++) {
