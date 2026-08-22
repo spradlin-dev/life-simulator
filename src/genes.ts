@@ -18,7 +18,7 @@ export interface Genes {
   metabolism: number; // how fast the belly empties
   stamina: number; // how long it lasts before needing sleep
   playfulness: number; // how fast boredom sets in, how richly play refills
-  diet: number; // which berry color the lineage eats, read in bands
+  diet: number; // FOSSIL — once picked the berry color; live eating is the strand's enzyme genes now
 }
 
 // every gene, checked complete at compile time: adding a field to Genes without
@@ -91,10 +91,10 @@ export const FOUNDER: Genes = {
   diet: 0.5,
 };
 
-// which berry a diet value means, read in bands with red owning the whole
-// middle: 0.5 IS the classic red-eater, and a lost diet tag decodes to 0.5,
-// so gene damage can never flip a lineage's berries — a flip takes real
-// generational drift past a band edge
+// the FOSSIL's reading: which berry a diet value once meant, in bands with
+// red owning the whole middle. Live digestion moved to the strand's enzyme
+// genes; the last remaining caller is the save migration, which uses the
+// fossil to pick which enzyme a pre-enzyme-era pip is granted
 export type BerryKind = 'red' | 'gold' | 'blue';
 export const DIET_BANDS = { gold: 0.3, blue: 0.7 } as const;
 export function dietOf(genes: Genes): BerryKind {

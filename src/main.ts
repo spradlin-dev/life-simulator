@@ -1,9 +1,21 @@
 import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { clamp01, lerp } from './math.ts';
-import { dietOf, hueShift, type BerryKind, type Genes } from './genes.ts';
+import { hueShift, type BerryKind, type Genes } from './genes.ts';
 import { LAWS } from './laws.ts';
-import { annotate, decode, drift, FOUNDER_STRAND, type DnaStat, type StrandSpanKind } from './dna.ts';
+import {
+  annotate,
+  decode,
+  drift,
+  encode,
+  enzymesOf,
+  forceAppendGrant,
+  FOUNDER_STRAND,
+  needsEnzymeGrant,
+  tryAppendGrant,
+  type DnaStat,
+  type StrandSpanKind,
+} from './dna.ts';
 import {
   chooseState,
   knock,
@@ -79,8 +91,8 @@ interface Treat {
   y: number;
   age: number;
   eater: Pip | null;
-  // ambient berries carry a color only matching diets can eat; a gift from
-  // the watcher tastes like home to everyone
+  // ambient berries carry a color; what a body pulls from one is its own
+  // enzymes' business. A gift from the watcher tastes like home to everyone
   kind: BerryKind | 'gift';
 }
 
@@ -151,6 +163,12 @@ toastReload.addEventListener('click', () => void updateSW(true));
 
 const TREAT_LIFE = 60;
 const TREAT_CAP = 100;
+// what the masthead bothers to print: an enzyme fainter than this is noise
+const ENZYME_TRACE_SHOW = 0.05;
+
+// below this digestion a meal is not worth the walk; the gradient's neutral
+// plateau ends here, and selection starts feeling the slope
+const ENZYME_CHASE_FLOOR = 0.2;
 const SPLIT_SWELL_S = 1.4;
 // starving is loud long before it is final: the fade begins two sim-minutes in,
 // the poof lands at three — and only ever while the player is present, since
@@ -346,18 +364,32 @@ function visibleHalfExtent(): { halfW: number; halfH: number } {
 
 // a berry someone else is already eating is invisible to the search — crowding
 // one treat starved everyone (each shove reset the other's chewing progress)
-function nearestTreatTo(x: number, y: number, self: Pip | null = null): { treat: Treat; dist: number } | null {
-  const diet = self ? dietOf(self.genes) : null;
+function nearestTreatTo(x: number, y: number, self: Pip): { treat: Treat; dist: number } | null {
   let best: { treat: Treat; dist: number } | null = null;
   for (const treat of treats) {
     if (treat.eater !== null && treat.eater !== self) continue;
-    // a pip only smells its own berry color; the watcher's gifts smell right
-    // to everyone (rescue must never depend on a lineage's diet)
-    if (diet !== null && treat.kind !== 'gift' && treat.kind !== diet) continue;
+    // a pip only smells food its body can use; the watcher's gifts are
+    // honey — simple sugars, digestible by every genome there will ever be
+    // (rescue must never depend on a lineage's enzymes)
+    if (treat.kind !== 'gift' && self.enzymes[treat.kind] < ENZYME_CHASE_FLOOR) continue;
     const dist = Math.hypot(treat.x - x, treat.y - y);
     if (!best || dist < best.dist) best = { treat, dist };
   }
   return best;
+}
+
+// the food this body digests best — what its home ground should grow
+function bestFood(pip: Pip): BerryKind {
+  let best: BerryKind = 'red';
+  for (const kind of BERRY_KINDS) if (pip.enzymes[kind] > pip.enzymes[best]) best = kind;
+  return best;
+}
+
+// the single strand-mutation choke point: every future writer (gene
+// transfer above all) inherits the derived-digestion refresh for free
+function setStrand(pip: Pip, strand: string): void {
+  pip.strand = strand;
+  pip.enzymes = enzymesOf(strand);
 }
 
 // ------------------------------------------------------------------ the pips
@@ -408,6 +440,9 @@ interface Pip {
   // seeds in transit: eaten berries ride the gut and are sown where the
   // pip happens to stand when they drop
   gut: { kind: BerryKind; dropIn: number }[];
+  // digestion per pigment, cached from the strand's enzyme genes — derived
+  // state, recomputed wherever the strand changes, never saved
+  enzymes: Record<BerryKind, number>;
   pauseFor: number;
   blinkIn: number;
   emote: string;
@@ -450,6 +485,7 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     fading: null,
     wanderTarget: null,
     gut: [],
+    enzymes: enzymesOf(strand),
     pauseFor: 0,
     blinkIn: 1.5 + Math.random() * 3,
     emote: '',
@@ -474,7 +510,18 @@ function randomSpot(): Vec {
 // and the stats are read from it — the genome is the only heredity there is.
 // The strangeness dial sets how far every arrival has traveled
 function wanderIn(x: number, y: number): Pip {
-  const strand = drift(FOUNDER_STRAND, dials.strangeness);
+  // wanderers descend from the granted founder line, their enzymes drifted
+  // exactly as far as the rest of their back-story — but survivorship keeps
+  // the gate honest: a traveler who could digest nothing would never have
+  // finished the journey, so a drift that broke digestion is re-granted
+  // (respelled when even the grant will not join clean — a harsh road)
+  let strand = drift(tryAppendGrant(FOUNDER_STRAND, 'red') ?? FOUNDER_STRAND, dials.strangeness);
+  if (needsEnzymeGrant(strand)) {
+    strand =
+      tryAppendGrant(strand, 'red') ??
+      tryAppendGrant(encode(decode(strand)), 'red') ??
+      forceAppendGrant(encode(decode(strand)), 'red');
+  }
   const pip = makePip(decode(strand), strand, x, y);
   // arrivals have lived a little already — mid-day, mid-life, unsynchronized
   // (scaled by the longevity dial, or a short-lived terrarium would welcome
@@ -620,7 +667,7 @@ if (saved?.flora) {
   // each pip's home ground gets a settled stand of its own food, and the
   // wind gets credit for a few groves of the colors nobody here eats yet
   for (const pip of pips) {
-    const diet = dietOf(pip.genes);
+    const diet = bestFood(pip);
     for (let i = 0; i < CELL_CAP; i++) {
       const x = pip.x + (Math.random() - 0.5) * 360;
       const y = pip.y + (Math.random() - 0.5) * 360;
@@ -712,7 +759,7 @@ function divide(parent: Pip): Pip {
   kid.vy = parent.vy + Math.sin(angle) * 70;
   parent.genes = a.genes;
   parent.lifespan = lifespanOf(a.genes);
-  parent.strand = a.strand;
+  setStrand(parent, a.strand);
   parent.needs = a.needs;
   parent.generation = a.generation;
   parent.disp = { ...FRESH_DISPOSITIONS };
@@ -892,7 +939,9 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
           // a good meal warms the memory of where it happened
           pip.places = markPlace(pip.places, target.treat.x / world.w, target.treat.y / world.h, 0.2);
           treats.splice(treats.indexOf(target.treat), 1);
-          pip.needs = eat(pip.needs);
+          // the meal is worth what this body's enzymes can pull from it;
+          // the watcher's honey needs no enzymes at all
+          pip.needs = eat(pip.needs, target.treat.kind === 'gift' ? 1 : pip.enzymes[target.treat.kind]);
           // an ambient berry's seeds ride along in the gut, to be sown
           // wherever the eater wanders over the next minute or so
           if (target.treat.kind !== 'gift') {
@@ -1510,15 +1559,24 @@ function updateDnaPanel(): void {
     dnaStrand.replaceChildren();
     return;
   }
-  dnaTitle.textContent = `${selectedPip.name} · ${selectedPip.strand.length} bases`;
-  if (dnaShownStrand === selectedPip.strand) return;
-  dnaShownStrand = selectedPip.strand;
+  const pip = selectedPip;
+  // digestion is the genome's most legible living output — it belongs on
+  // the ledger's masthead. A tilde marks an enzyme still stirring below the
+  // chase floor: visible to the watcher, not yet worth a walk to the pip
+  // ('nothing yet' is a real state: a lineage can lose its enzymes, and the
+  // fossil diet gene will not save it)
+  const eats = BERRY_KINDS.filter((k) => pip.enzymes[k] >= ENZYME_TRACE_SHOW)
+    .map((k) => `${pip.enzymes[k] < ENZYME_CHASE_FLOOR ? '~' : ''}${k} ${Math.round(pip.enzymes[k] * 100)}%`)
+    .join(' · ');
+  dnaTitle.textContent = `${pip.name} · ${pip.strand.length} bases · eats ${eats || 'nothing yet'}`;
+  if (dnaShownStrand === pip.strand) return;
+  dnaShownStrand = pip.strand;
   dnaStrand.replaceChildren();
-  for (const span of annotate(selectedPip.strand)) {
+  for (const span of annotate(pip.strand)) {
     const bit = document.createElement('span');
     bit.className = SPAN_CLASS[span.kind];
     if (span.stat !== null) bit.style.setProperty('--h', String(STAT_HUES[span.stat]));
-    bit.textContent = selectedPip.strand.slice(span.from, span.to);
+    bit.textContent = pip.strand.slice(span.from, span.to);
     dnaStrand.append(bit);
   }
 }
@@ -1682,6 +1740,10 @@ dialsPanel.append(resetButton);
 function beginAnew(): void {
   clearSave(SAVE_KEY);
   treats.length = 0;
+  // a fresh dish is FRESH: the old world's ripening sprouts and wind clocks
+  // must not leak into the new one
+  sprouts.length = 0;
+  for (const kind of BERRY_KINDS) windTimers[kind] = 0;
   pips.length = 0;
   const first = wanderIn(world.w / 2, world.h / 2);
   showEmote(first, '✧');

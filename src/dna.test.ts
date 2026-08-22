@@ -6,12 +6,18 @@ import {
   decode,
   drift,
   encode,
+  enzymeBodies,
+  enzymeGrant,
+  enzymesOf,
   FOUNDER_STRAND,
   isValidStrand,
   mutateGenome,
+  needsEnzymeGrant,
+  PIGMENT_SIGS,
   readsOf,
   STRAND_MAX,
   STRAND_MIN,
+  tryAppendGrant,
 } from './dna.ts';
 import { DIAL_FIELDS, FOUNDER, sanitizeGenes, type Genes } from './genes.ts';
 
@@ -395,6 +401,83 @@ describe('the heritable polymerase', () => {
     const sloppy = copyStrand(COPY_STRAND, [0], lcg(21), 1, 0);
     const careful = copyStrand(COPY_STRAND, [0], lcg(21), 1, 1);
     expect(diffsFrom(COPY_STRAND, sloppy)).toBeGreaterThan(diffsFrom(COPY_STRAND, careful));
+  });
+});
+
+describe('content genes: the enzyme layer', () => {
+  const GRANTED = FOUNDER_STRAND + enzymeGrant('red');
+
+  it('the pigment signatures sit at maximal mutual distance, free of starts and stops', () => {
+    const sigs = Object.values(PIGMENT_SIGS);
+    for (let i = 0; i < sigs.length; i++) {
+      expect(sigs[i]).toHaveLength(12);
+      expect(sigs[i].includes('ATG')).toBe(false);
+      expect(sigs[i].includes('TAA')).toBe(false);
+      for (let j = i + 1; j < sigs.length; j++) {
+        let d = 0;
+        for (let k = 0; k < 12; k++) if (sigs[i][k] !== sigs[j][k]) d++;
+        expect(d).toBe(12);
+      }
+    }
+  });
+
+  it('the granted founder digests exactly its own color: red 1, gold 0, blue 0', () => {
+    expect(enzymesOf(GRANTED)).toEqual({ red: 1, gold: 0, blue: 0 });
+  });
+
+  it('a join is either provably invisible to the stat decoder, or refused', () => {
+    for (const kind of ['red', 'gold', 'blue'] as const) {
+      // the canonical tail always joins clean, for all three colors
+      const grown = tryAppendGrant(FOUNDER_STRAND, kind);
+      expect(grown).not.toBeNull();
+      expect(decode(grown!)).toEqual(decode(FOUNDER_STRAND));
+      expect(enzymesOf(grown!)[kind]).toBe(1);
+      // hostile tails: whatever the spacer, either the invariants hold or
+      // the join is refused — never a dirty append
+      for (const tail of ['TA', 'GA', 'AT', 'CA', 'AAAA']) {
+        const strand = FOUNDER_STRAND + tail;
+        const joined = tryAppendGrant(strand, kind);
+        if (joined !== null) {
+          expect(decode(joined)).toEqual(decode(strand));
+          expect(enzymesOf(joined)[kind]).toBe(1);
+          expect(joined.startsWith(strand)).toBe(true);
+        }
+      }
+    }
+    // and at least one loaded tail really is refused: ...GG + TA arms a
+    // diet tag whose body any append would supply — no join is innocent
+    expect(tryAppendGrant(FOUNDER_STRAND + 'TA', 'red')).toBeNull();
+  });
+
+  it('an ORF needs its stop: a start without one is junk, a short body too', () => {
+    expect(enzymeBodies('CCATG' + PIGMENT_SIGS.red + 'CC')).toEqual([]);
+    expect(enzymeBodies('CCATGGCGCTAACC')).toEqual([]);
+    expect(enzymeBodies('CCATG' + PIGMENT_SIGS.red + 'TAACC')).toEqual([PIGMENT_SIGS.red]);
+  });
+
+  it('a long body is scanned window by window: a buried signature still works', () => {
+    const buried = 'GG' + 'ATG' + 'CGCGCG' + PIGMENT_SIGS.gold + 'GCGCGC' + 'TAA';
+    expect(enzymesOf(buried).gold).toBe(1);
+  });
+
+  it('the curve zeroes random content and grades the slope', () => {
+    // 9 of 12 matched -> (0.75 - 0.5) / 0.5 = 0.5; 6 of 12 -> 0
+    const nine = PIGMENT_SIGS.red.slice(0, 9) + 'GGG';
+    expect(enzymesOf('GG' + 'ATG' + nine + 'TAA').red).toBeCloseTo(0.5, 10);
+  });
+
+  it('one lost letter is felt: a frameshifted enzyme digests worse', () => {
+    // dropped from the MIDDLE so the junction cannot resupply the letter
+    // (dropping the first letter is healed by the start codon's own G —
+    // reading-frame biology photobombing the test, kept out on purpose)
+    const gapped = PIGMENT_SIGS.red.slice(0, 6) + PIGMENT_SIGS.red.slice(7);
+    const shifted = 'CC' + 'ATG' + gapped + 'TAA';
+    expect(enzymesOf(shifted).red).toBeLessThan(1);
+  });
+
+  it('the grant marker: pre-enzyme strands ask, granted strands never do', () => {
+    expect(needsEnzymeGrant(FOUNDER_STRAND)).toBe(true);
+    expect(needsEnzymeGrant(GRANTED)).toBe(false);
   });
 });
 

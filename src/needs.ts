@@ -69,9 +69,12 @@ export function tickNeeds(
   };
 }
 
-export function eat(needs: Needs): Needs {
-  // a snack also perks the body a little — enough to rouse a collapsed pip
-  return { ...needs, food: clamp01(needs.food + 0.4), rest: clamp01(needs.rest + 0.05) };
+// potency is how well this body digests what it just ate (1 for the
+// watcher's honey and for a signature-perfect enzyme); the little rest perk
+// stays flat — rousing a collapsed pip is about the act of eating, not the
+// calories extracted
+export function eat(needs: Needs, potency = 1): Needs {
+  return { ...needs, food: clamp01(needs.food + 0.4 * potency), rest: clamp01(needs.rest + 0.05) };
 }
 
 // happiness is derived, never stored: met needs, amplified by trust, crushed by fear

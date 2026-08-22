@@ -142,6 +142,13 @@ describe('eat', () => {
     expect(eat(FRESH_NEEDS).food).toBe(1);
   });
 
+  it('the meal is worth what the body can digest', () => {
+    expect(eat({ ...FRESH_NEEDS, food: 0.3 }, 0.5).food).toBeCloseTo(0.5);
+    // even an indigestible mouthful still perks the body a little
+    expect(eat({ ...FRESH_NEEDS, food: 0.3, rest: 0.3 }, 0).food).toBeCloseTo(0.3);
+    expect(eat({ ...FRESH_NEEDS, food: 0.3, rest: 0.3 }, 0).rest).toBeCloseTo(0.35);
+  });
+
   it('perks the body a little, capped at full', () => {
     const after = eat({ food: 0.2, rest: 0.3, fun: 0.5 });
     expect(after.rest).toBeCloseTo(0.35);

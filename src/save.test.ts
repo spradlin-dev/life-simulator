@@ -11,7 +11,7 @@ import {
   type LivePip,
 } from './save.ts';
 import { dietOf, FOUNDER } from './genes.ts';
-import { DECODER_VERSION, FOUNDER_STRAND } from './dna.ts';
+import { DECODER_VERSION, enzymeGrant, FOUNDER_STRAND, PIGMENT_SIGS } from './dna.ts';
 import { FRESH_NEEDS } from './needs.ts';
 import { FRESH_DISPOSITIONS, freshPlaces, PLACE_CELLS } from './dispositions.ts';
 
@@ -69,7 +69,7 @@ describe('save round-trip', () => {
 
   it('stamps the current version and decoder on every save it writes', () => {
     const written = JSON.parse(serialize([somePip()]));
-    expect(written.v).toBe(12);
+    expect(written.v).toBe(13);
     expect(written.decoder).toBe(DECODER_VERSION);
     expect('lock' in written).toBe(false);
     expect(Array.isArray(written.flora)).toBe(true);
@@ -260,7 +260,7 @@ describe('parseSave rejects broken saves', () => {
     expect(parseSave('not json')).toBeNull();
     expect(parseSave('{}')).toBeNull();
     expect(parseSave('null')).toBeNull();
-    expect(parseSave(JSON.stringify({ v: 13, pips: [somePip()] }))).toBeNull();
+    expect(parseSave(JSON.stringify({ v: 14, pips: [somePip()] }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: { food: 1 }, pos: somePos }))).toBeNull();
     expect(parseSave(JSON.stringify({ v: 2, genes: FOUNDER, trust: 0.5, needs: someNeeds }))).toBeNull();
@@ -378,31 +378,35 @@ describe('place cell count contract', () => {
 describe('the genome rides the save', () => {
   const DECODER = DECODER_VERSION;
 
-  it('a healthy same-decoder strand is kept verbatim, junk DNA and all', () => {
+  it('a healthy same-decoder strand is kept verbatim (plus a clean-joined grant)', () => {
     const grown = FOUNDER_STRAND + 'AAAA';
     const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip({ strand: grown })] }));
-    expect(parsed!.pips[0].strand).toBe(grown);
+    const strand = parsed!.pips[0].strand;
+    // the junk tail survives verbatim; the grant joins behind whatever
+    // spacer keeps the stat decoder blind to the append
+    expect(strand.startsWith(grown)).toBe(true);
+    expect(strand.endsWith(PIGMENT_SIGS.red + 'TAA')).toBe(true);
   });
 
   it('v7 pips grow a strand spelled from their stats, stats untouched', () => {
     const parsed = parseSave(JSON.stringify({ v: 7, pips: [v7Pip()] }));
     expect(parsed).not.toBeNull();
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
-    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND + enzymeGrant('red'));
   });
 
   it('rollback insurance: stats alone reconstruct a working pip', () => {
     const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [v7Pip()] }));
     expect(parsed).not.toBeNull();
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
-    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND + enzymeGrant('red'));
   });
 
   it('a mangled strand is respelled from the stats, never fatal', () => {
     for (const bad of ['ACGU'.repeat(30), 'ACGT', 42, null]) {
       const parsed = parseSave(JSON.stringify({ v: 9, decoder: DECODER, pips: [somePip({ strand: bad as unknown as string })] }));
       expect(parsed).not.toBeNull();
-      expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+      expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND + enzymeGrant('red'));
       expect(parsed!.pips[0].genes).toEqual(FOUNDER);
     }
   });
@@ -411,8 +415,45 @@ describe('the genome rides the save', () => {
     const grown = FOUNDER_STRAND + 'AAAA';
     const parsed = parseSave(JSON.stringify({ v: 9, decoder: 999, pips: [somePip({ strand: grown })] }));
     expect(parsed).not.toBeNull();
-    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND + enzymeGrant('red'));
     expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+  });
+
+  it('the grant follows the fossil: a gold-band diet gene earns a gold enzyme', () => {
+    const gilded = somePip();
+    (gilded as { genes: typeof FOUNDER }).genes = { ...FOUNDER, diet: 0.2 };
+    const parsed = parseSave(JSON.stringify({ v: 12, decoder: DECODER, pips: [gilded] }));
+    expect(parsed!.pips[0].strand.endsWith(enzymeGrant('gold'))).toBe(true);
+  });
+
+  it('enzyme-era saves are honored as they lie: v13 never re-grants', () => {
+    // a lineage that truly lost its enzymes must not win them back by reload
+    const parsed = parseSave(JSON.stringify({ v: 13, decoder: DECODER, pips: [somePip({ strand: FOUNDER_STRAND })] }));
+    expect(parsed!.pips[0].strand).toBe(FOUNDER_STRAND);
+  });
+
+  it('a rebuilt strand is granted whatever its version: machinery loss is not evolution loss', () => {
+    // decoder mismatch and mangled strands both force a from-stats respell,
+    // which can never carry enzymes — without the grant, the pip and every
+    // descendant would forage nothing forever after the next decoder bump
+    const foreign = parseSave(JSON.stringify({ v: 13, decoder: 999, pips: [somePip({ strand: FOUNDER_STRAND + 'AAAA' })] }));
+    expect(foreign!.pips[0].strand.endsWith(enzymeGrant('red'))).toBe(true);
+    const mangled = parseSave(JSON.stringify({ v: 13, decoder: DECODER, pips: [somePip({ strand: 'ACGT' })] }));
+    expect(mangled!.pips[0].strand.endsWith(enzymeGrant('red'))).toBe(true);
+  });
+
+  it('a grant that cannot fit respells the strand: digestion survives, junk pays', () => {
+    const nearCap = 'ACGT'.repeat(297) + 'AC'; // 1190 valid letters, no room
+    const parsed = parseSave(JSON.stringify({ v: 12, decoder: DECODER, pips: [somePip({ strand: nearCap })] }));
+    const strand = parsed!.pips[0].strand;
+    expect(strand.startsWith(FOUNDER_STRAND)).toBe(true);
+    expect(strand.endsWith(enzymeGrant('red'))).toBe(true);
+    expect(parsed!.pips[0].genes).toEqual(FOUNDER);
+  });
+
+  it('even the oldest saves eat on arrival: v1-v3 pips are granted too', () => {
+    const parsed = parseSave(JSON.stringify({ v: 1, genes: FOUNDER, trust: 0.5 }));
+    expect(parsed!.pips[0].strand.endsWith(enzymeGrant('red'))).toBe(true);
   });
 
   it('the retired feeder lock is ignored wherever an old save carries it', () => {

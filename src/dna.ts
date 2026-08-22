@@ -2,9 +2,11 @@ import { clamp01, lerp } from './math.ts';
 import {
   DIAL_FIELDS,
   FOUNDER,
+  GENE_FIELDS,
   LIGHT_RANGE,
   SAT_RANGE,
   sanitizeGenes,
+  type BerryKind,
   type DialField,
   type Genes,
 } from './genes.ts';
@@ -12,8 +14,8 @@ import {
 // The genome: a strand of ACGT sitting strictly upstream of Genes. Only
 // reproduction touches it — copyStrand carries it through live division,
 // drift seeds unseen generations, decode turns it into the Genes struct the
-// rest of the game already runs on. Installing or removing this module is
-// one producer swap; nothing downstream reads DNA.
+// rest of the game already runs on. The enzyme layer below is the one
+// downstream reader: digestion is read from strand CONTENT, cached per pip.
 //
 // Genes are marker-based, not positional: a 3-base tag announces a stat and
 // the 12 bases after it are the body, whose letter-value sum scales to 0..1 —
@@ -289,6 +291,143 @@ export const FOUNDER_STRAND = encode(FOUNDER);
 
 export const STRAND_MIN = 60;
 export const STRAND_MAX = 1200;
+
+// ---------------------------------------- content genes: the enzyme layer
+// An enzyme is any ATG..TAA span with a body of six letters or more — read
+// by what it SAYS, not where it is filed. Its meaning is content: the body
+// is scored against each berry pigment's signature, and digestion is the
+// best sliding-window match pushed through a curve that zeroes random
+// content. No registry, no tag, no saturation: a lineage gains a food when
+// a start forming in junk wakes a new enzyme that drifts toward a pigment —
+// de novo birth is the dominant road (measured; an intact duplicated ORF
+// surviving the copyist is the rare one) — and it loses nothing it had.
+export const ENZYME_START = 'ATG';
+export const ENZYME_STOP = 'TAA';
+const ENZYME_MIN_BODY = 6;
+
+// the three pigments' 12-letter signatures: pairwise distance is the full
+// 12 (a body cannot sit near two at once — the specialist/generalist
+// tradeoff is geometry, not a rule), none contains a start or stop, and
+// each grant's first six letters spell no stat tag — the only positions an
+// end-appended grant ever exposes to a stray read with body room
+export const PIGMENT_SIGS: Record<BerryKind, string> = {
+  red: 'GTCCTGCACTCC',
+  gold: 'TGTTGCTCAGAA',
+  blue: 'CCAACTAGTCTT',
+};
+
+export function enzymeBodies(strand: string): string[] {
+  const out: string[] = [];
+  let at = 0;
+  while ((at = strand.indexOf(ENZYME_START, at)) !== -1) {
+    const stop = strand.indexOf(ENZYME_STOP, at + 3);
+    if (stop === -1) break;
+    const body = strand.slice(at + 3, stop);
+    if (body.length >= ENZYME_MIN_BODY) out.push(body);
+    at += 3;
+  }
+  return out;
+}
+
+// best sliding match of a signature along a body, through the curve: a
+// random body (~25% agreement) scores 0, a perfect one scores 1
+function enzymeEff(body: string, sig: string): number {
+  let best = 0;
+  if (body.length < sig.length) {
+    let m = 0;
+    for (let i = 0; i < body.length; i++) if (body[i] === sig[i]) m++;
+    best = m / sig.length;
+  } else {
+    for (let w = 0; w + sig.length <= body.length; w++) {
+      let m = 0;
+      for (let i = 0; i < sig.length; i++) if (body[w + i] === sig[i]) m++;
+      if (m / sig.length > best) best = m / sig.length;
+    }
+  }
+  return Math.max(0, (best - 0.5) / 0.5);
+}
+
+// a body's digestion of each color: the best enzyme does the work, so
+// spare copies are free to drift toward other pigments
+export function enzymesOf(strand: string): Record<BerryKind, number> {
+  const out: Record<BerryKind, number> = { red: 0, gold: 0, blue: 0 };
+  for (const body of enzymeBodies(strand)) {
+    for (const kind of Object.keys(PIGMENT_SIGS) as BerryKind[]) {
+      const eff = enzymeEff(body, PIGMENT_SIGS[kind]);
+      if (eff > out[kind]) out[kind] = eff;
+    }
+  }
+  return out;
+}
+
+// the bare grant string: a signature-perfect enzyme for one pigment behind
+// a GG spacer. Prefer appendGrant, which also proves the join clean
+export function enzymeGrant(kind: BerryKind): string {
+  return 'GG' + ENZYME_START + PIGMENT_SIGS[kind] + ENZYME_STOP;
+}
+
+// append a grant so the JOIN is invisible to the stat decoder: spacers are
+// tried until decoding the grown strand changes nothing. Returns null when
+// no spacer can manage it — a tail can carry a LOADED tag whose body the
+// append itself would supply, and then no join is innocent; the caller
+// respells from stats instead (decode-exact either way, junk pays there).
+// A stray some future append may wake is ordinary echo pleiotropy
+export function tryAppendGrant(strand: string, kind: BerryKind): string | null {
+  const before = decode(strand);
+  const joins = (spacer: string): string | null => {
+    const grown = strand + spacer + ENZYME_START + PIGMENT_SIGS[kind] + ENZYME_STOP;
+    const after = decode(grown);
+    return GENE_FIELDS.every((f) => after[f] === before[f]) && enzymesOf(grown)[kind] === 1
+      ? grown
+      : null;
+  };
+  for (const spacer of ['GG', 'CG', 'GGGG', 'CCGG', 'GCGG', 'CGGG']) {
+    const grown = joins(spacer);
+    if (grown) return grown;
+  }
+  // no clean join: a tail can hold armed danglers (near-tags one append
+  // away from a body) — sometimes several, overlapping, which no single
+  // spacer can dodge. The caller's ladder ends at forceAppendGrant
+  return null;
+}
+
+// the last resort behind tryAppendGrant: some tails hold OVERLAPPING armed
+// danglers no single pad can echo-match, so a perfectly clean join does not
+// exist. Feeding the pip outranks purity — but the whisper is chosen, not
+// suffered: every candidate join is measured and the one displacing the
+// stats least wins (observed residual: well under a grid step)
+export function forceAppendGrant(strand: string, kind: BerryKind): string {
+  const before = decode(strand);
+  let best = strand + enzymeGrant(kind);
+  let bestCost = Infinity;
+  let s = ((strand.length + 7) * 2654435761) >>> 0;
+  const rand = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0), s / 2 ** 32);
+  const candidates = ['GG', 'CG', 'GGGG', 'CCGG', 'GCGG', 'CGGG'];
+  for (let i = 0; i < 24; i++) {
+    let pad = '';
+    for (let j = 0; j < 14; j++) pad += 'ACGT'[(rand() * 4) | 0];
+    if (!pad.includes(ENZYME_START) && !pad.includes(ENZYME_STOP)) candidates.push(pad);
+  }
+  for (const spacer of candidates) {
+    const grown = strand + spacer + ENZYME_START + PIGMENT_SIGS[kind] + ENZYME_STOP;
+    if (enzymesOf(grown)[kind] !== 1) continue;
+    const after = decode(grown);
+    let cost = 0;
+    for (const f of GENE_FIELDS) cost += Math.abs(after[f] - before[f]);
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = grown;
+    }
+  }
+  return best;
+}
+
+// a strand from before the enzyme era has junk ORFs but nothing that can
+// feed a body — that absence is what marks it for the grant
+export function needsEnzymeGrant(strand: string): boolean {
+  const d = enzymesOf(strand);
+  return Math.max(d.red, d.gold, d.blue) < 0.5;
+}
 
 // expected substitutions per drift generation on a founder-length strand; the
 // rate is per base, so a bloated strand pays for its length in mutation load

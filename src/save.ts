@@ -1,6 +1,14 @@
 import { clamp01 } from './math.ts';
-import { GENE_FIELDS, sanitizeGenes, type BerryKind, type Genes } from './genes.ts';
-import { DECODER_VERSION, encode, isValidStrand } from './dna.ts';
+import { dietOf, GENE_FIELDS, sanitizeGenes, type BerryKind, type Genes } from './genes.ts';
+import {
+  DECODER_VERSION,
+  encode,
+  forceAppendGrant,
+  isValidStrand,
+  needsEnzymeGrant,
+  STRAND_MAX,
+  tryAppendGrant,
+} from './dna.ts';
 import { makeName, sanitizeName } from './names.ts';
 import { FRESH_NEEDS, NEED_FIELDS, type Needs } from './needs.ts';
 import {
@@ -71,7 +79,7 @@ export const MAX_FLORA = 1000;
 export function serialize(pips: readonly LivePip[], flora: readonly FloraSave[] = []): string {
   // the writer must never emit a roster its own reader would reject
   return JSON.stringify({
-    v: 12,
+    v: 13,
     decoder: DECODER_VERSION,
     pips: pips.slice(0, MAX_SAVED_PIPS),
     flora: flora.slice(0, MAX_FLORA),
@@ -187,8 +195,9 @@ export function parseSave(raw: string): WorldSave | null {
   // known versions migrate forward (v1 predates needs/pos, v2 memories, v3 the
   // roster, v4 the lineage, v5 names and looks, v6 the tempo genes, v7 the
   // genome, v8 the feeder lock, v9 stored the lock, v10 retired it, v11 the
-  // age); future versions must keep MIGRATING — a pip must never be lost
-  if (d.v === 12 || d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
+  // age, v12 the ground, v13 the enzyme grant); future versions must keep
+  // MIGRATING — a pip must never be lost
+  if (d.v === 13 || d.v === 12 || d.v === 11 || d.v === 10 || d.v === 9 || d.v === 8 || d.v === 7 || d.v === 6 || d.v === 5 || d.v === 4) {
     // an empty flock is a legal world: the terrarium's extinctions must
     // survive the reload (the meadow's laws reseed an empty boot instead)
     if (!Array.isArray(d.pips) || d.pips.length > MAX_SAVED_PIPS) return null;
@@ -209,8 +218,21 @@ export function parseSave(raw: string): WorldSave | null {
       // saves, mangled strands, foreign decoder versions — is respelled from
       // the cached stats, so the pip itself never changes and is never lost
       const raw = (entry as Record<string, unknown>).strand;
-      const strand =
-        d.v >= 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : encode(pip.genes);
+      const verbatim =
+        d.v >= 8 && d.decoder === DECODER_VERSION && isValidStrand(raw) ? raw : null;
+      let strand = verbatim ?? encode(pip.genes);
+      // the enzyme-era grant: every pre-enzyme save gets one, and so does
+      // any strand this migration had to respell from stats — a rebuild can
+      // never carry enzymes, whatever its version, and losing them to the
+      // MACHINERY is not losing them to evolution. Enzyme-era strands are
+      // otherwise honored as they lie: what evolution lost, no reload wins
+      // back. When the tail forbids a clean join (a loaded tag, no room),
+      // the strand is respelled — decode-exact either way; junk pays there
+      if ((d.v <= 12 || verbatim === null) && needsEnzymeGrant(strand)) {
+        const kind = dietOf(pip.genes);
+        const joined = strand.length + 36 <= STRAND_MAX ? tryAppendGrant(strand, kind) : null;
+        strand = joined ?? tryAppendGrant(encode(pip.genes), kind) ?? forceAppendGrant(encode(pip.genes), kind);
+      }
       // age arrived in v11; older saves and mangled values get a scattered
       // midlife jitter so a migrated flock never ages out in one wave
       const rawAge = (entry as Record<string, unknown>).age;
@@ -222,7 +244,7 @@ export function parseSave(raw: string): WorldSave | null {
     }
     // v9's feeder lock is retired: whatever a save says about it is ignored
     // flora arrived in v12; older worlds get null and a warm-started ground
-    return { pips, flora: d.v === 12 ? parseFlora(d.flora) : null };
+    return { pips, flora: d.v >= 12 ? parseFlora(d.flora) : null };
   }
   if (d.v !== 1 && d.v !== 2 && d.v !== 3) return null;
 
@@ -248,7 +270,10 @@ export function parseSave(raw: string): WorldSave | null {
     pips: [
       {
         ...core,
-        strand: encode(core.genes),
+        // the ancient branch predates enzymes by definition: grant here too
+        strand:
+          tryAppendGrant(encode(core.genes), dietOf(core.genes)) ??
+          forceAppendGrant(encode(core.genes), dietOf(core.genes)),
         needs,
         pos,
         disp,
