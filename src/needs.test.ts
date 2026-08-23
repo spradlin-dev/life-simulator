@@ -32,7 +32,7 @@ describe('tickNeeds', () => {
   it('fun grows while engaged and fades in idleness', () => {
     const bored = run(FRESH_NEEDS, 'wander', 0, 120);
     expect(bored.fun).toBeLessThan(FRESH_NEEDS.fun);
-    for (const s of ['follow', 'curious', 'snuggle', 'snack'] as const) {
+    for (const s of ['follow', 'curious', 'snuggle', 'play', 'snack'] as const) {
       expect(run({ ...FRESH_NEEDS, fun: 0.2 }, s, 100, 20).fun).toBeGreaterThan(0.9);
     }
   });

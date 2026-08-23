@@ -3,19 +3,26 @@ import { copyStrand, decode } from './dna.ts';
 import type { Genes } from './genes.ts';
 import type { Needs } from './needs.ts';
 
-// how often a blissful pip divides: expected once per 10 minutes at happiness 1.
-// The births dial multiplies this
+// how often a brimming pip divides: expected once per 10 minutes at a full
+// belly. The births dial multiplies this
 export const SPLIT_MAX_RATE = 1 / 600;
 // seconds to FULL readiness after a division; recovery is a smooth ramp, never a cliff
 export const SPLIT_COOLDOWN = 90;
+// a body must nearly double before it can become two: below this belly the
+// division simply cannot be paid for, since each daughter starts with half
+export const SPLIT_FOOD_AT = 0.7;
 
 // probability of dividing during this tick — a hazard rate, not a timer.
-// happiness^4 makes it super-linear: misery never splits, bliss often does.
-// recovery since the last division scales the rate continuously — with no
-// eligibility moment to share, a flock can never phase-lock into waves
-export function splitChance(happiness: number, sinceSplit: number, dt: number, births = 1): number {
+// Reproduction is paid for in ENERGY, the way real division is: the rate
+// scales with the belly's surplus above what two viable daughters cost,
+// and feelings play no part (a mother's comfort shapes the copies through
+// the copyist's trace, never the count). Recovery since the last division
+// scales the rate continuously — with no eligibility moment to share, a
+// flock can never phase-lock into waves
+export function splitChance(food: number, sinceSplit: number, dt: number, births = 1): number {
   const readiness = Math.min(1, Math.max(0, sinceSplit) / SPLIT_COOLDOWN) ** 2;
-  return Math.min(1, SPLIT_MAX_RATE * births * clamp01(happiness) ** 4 * readiness * dt);
+  const surplus = Math.max(0, (clamp01(food) - SPLIT_FOOD_AT) / (1 - SPLIT_FOOD_AT));
+  return Math.min(1, SPLIT_MAX_RATE * births * surplus * readiness * dt);
 }
 
 // what the split conserves; lifetime scars are deliberately absent — a

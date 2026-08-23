@@ -44,6 +44,7 @@ function senses(overrides: Partial<Senses> = {}): Senses {
     speed: 0,
     stillFor: 0,
     treatDist: Infinity,
+    friendDist: Infinity,
     place: 0,
     alarm: 0,
     torpor: 0,
@@ -368,6 +369,62 @@ describe('chooseState', () => {
   it('a full pip ignores treats', () => {
     const s = senses({ treatDist: 200 });
     expect(chooseState('wander', calm, fed, plain, s).state).toBe('wander');
+  });
+
+  it('the meadow entertains itself: a bored pip romps with a calm flockmate', () => {
+    const bored = { ...fed, fun: 0.2 };
+    expect(chooseState('wander', calm, bored, plain, senses({ presence: 0, friendDist: 100 })).state).toBe('play');
+    // no friend in reach: boredom alone finds nobody to romp with
+    expect(chooseState('wander', calm, bored, plain, senses({ presence: 0 })).state).toBe('wander');
+  });
+
+  it('a romp runs until joy is topped up, and never flickers at the line', () => {
+    const midRomp = { ...fed, fun: 0.6 };
+    expect(chooseState('play', calm, midRomp, plain, senses({ presence: 0, friendDist: 120 })).state).toBe('play');
+    expect(chooseState('wander', calm, midRomp, plain, senses({ presence: 0, friendDist: 120 })).state).not.toBe('play');
+    expect(chooseState('play', calm, { ...fed, fun: 0.9 }, plain, senses({ presence: 0, friendDist: 120 })).state).not.toBe('play');
+  });
+
+  it('hunger outranks the romp: a peckish bored pip eats first', () => {
+    const hungryBored = { food: 0.3, rest: 1, fun: 0.2 };
+    expect(chooseState('wander', calm, hungryBored, plain, senses({ presence: 0, friendDist: 100, treatDist: 100 })).state).toBe('snack');
+  });
+
+  it('the watcher outranks the romp: attention is the extra, the flock is the fallback', () => {
+    const bored = { ...fed, fun: 0.2 };
+    // a trusted watcher settled close by wins over a nearby friend
+    const warm: Moods = { fear: 0, curiosity: 0, trust: 0.9 };
+    expect(chooseState('wander', warm, bored, plain, senses({ dist: 60, speed: 10, friendDist: 100 })).state).toBe('snuggle');
+    // a watcher present but too far to engage: the romp fills the gap
+    expect(chooseState('wander', calm, bored, plain, senses({ dist: 1000, speed: 10, friendDist: 100 })).state).toBe('play');
+  });
+
+  it('the romp hysteresis holds on distance too: a drifting friend keeps a romp, not a new one', () => {
+    const midRomp = { ...fed, fun: 0.6 };
+    expect(chooseState('play', calm, midRomp, plain, senses({ presence: 0, friendDist: 260 })).state).toBe('play');
+    const bored = { ...fed, fun: 0.2 };
+    expect(chooseState('wander', calm, bored, plain, senses({ presence: 0, friendDist: 260 })).state).toBe('wander');
+  });
+
+  it('hours-unattended, the meadow still romps: a friend in reach beats the idle nap', () => {
+    // stillFor is the WATCHER's idle clock — 999 models true absence, not
+    // a hand that left seconds ago
+    const bored = { ...fed, fun: 0.2 };
+    expect(chooseState('wander', calm, bored, plain, senses({ presence: 0, stillFor: 999, friendDist: 100 })).state).toBe('play');
+    expect(chooseState('wander', calm, bored, plain, senses({ presence: 0, stillFor: 999 })).state).toBe('sleep');
+  });
+
+  it('the starving never romp: the endgame stays a stagger, not a dance', () => {
+    const famished = { food: 0, rest: 1, fun: 0.1 };
+    expect(chooseState('wander', calm, famished, plain, senses({ presence: 0, stillFor: 999, friendDist: 100 })).state).not.toBe('play');
+    expect(chooseState('play', calm, famished, plain, senses({ presence: 0, friendDist: 100 })).state).not.toBe('play');
+  });
+
+  it('a romp never waltzes past food: mid-play, unattended, peckish — the berry wins', () => {
+    const peckish = { food: 0.3, rest: 1, fun: 0.2 };
+    expect(
+      chooseState('play', calm, peckish, plain, senses({ presence: 0, stillFor: 999, friendDist: 100, treatDist: 100 })).state,
+    ).toBe('snack');
   });
 
   it('a hungry pip with no treat in range does not snack', () => {

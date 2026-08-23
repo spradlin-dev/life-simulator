@@ -23,6 +23,7 @@ const ENGAGING: Record<CritterState, boolean> = {
   flee: false,
   cower: false,
   snuggle: true,
+  play: true,
   snack: true,
   sleep: false,
 };

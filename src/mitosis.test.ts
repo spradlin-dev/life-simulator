@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitChance, splitOutcome, SPLIT_COOLDOWN, SPLIT_MAX_RATE } from './mitosis.ts';
+import { splitChance, splitOutcome, SPLIT_COOLDOWN, SPLIT_FOOD_AT, SPLIT_MAX_RATE } from './mitosis.ts';
 import { FOUNDER, GENE_FIELDS, sanitizeGenes } from './genes.ts';
 import { decode, encode, isValidStrand } from './dna.ts';
 
@@ -28,16 +28,15 @@ const core = {
 };
 
 describe('splitChance', () => {
-  it('misery never divides', () => {
+  it('an empty or merely-adequate belly never divides: two daughters must be affordable', () => {
     expect(splitChance(0, SPLIT_COOLDOWN, 1)).toBe(0);
+    expect(splitChance(0.5, SPLIT_COOLDOWN, 1)).toBe(0);
+    expect(splitChance(SPLIT_FOOD_AT, SPLIT_COOLDOWN, 1)).toBe(0);
   });
 
-  it('bliss divides at the max rate', () => {
+  it('a full belly divides at the max rate, and the surplus scales linearly', () => {
     expect(splitChance(1, SPLIT_COOLDOWN, 1)).toBeCloseTo(SPLIT_MAX_RATE);
-  });
-
-  it('is super-linear: half happiness is far less than half the chance', () => {
-    expect(splitChance(0.5, SPLIT_COOLDOWN, 1)).toBeLessThan(splitChance(1, SPLIT_COOLDOWN, 1) / 4);
+    expect(splitChance(0.85, SPLIT_COOLDOWN, 1)).toBeCloseTo(SPLIT_MAX_RATE * 0.5);
   });
 
   it('scales with the tick and with the births dial', () => {
@@ -49,7 +48,7 @@ describe('splitChance', () => {
     expect(splitChance(1, SPLIT_COOLDOWN, 1, 1e9)).toBe(1);
   });
 
-  it('tolerates out-of-range happiness', () => {
+  it('tolerates out-of-range bellies', () => {
     expect(splitChance(-1, SPLIT_COOLDOWN, 1)).toBe(0);
     expect(splitChance(7, SPLIT_COOLDOWN, 1)).toBeCloseTo(SPLIT_MAX_RATE);
   });

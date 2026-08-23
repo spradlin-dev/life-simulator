@@ -9,6 +9,7 @@ export type CritterState =
   | 'flee'
   | 'cower'
   | 'snuggle'
+  | 'play'
   | 'snack'
   | 'sleep';
 
@@ -27,6 +28,7 @@ export interface Senses {
   place: number; // memory of the ground it stands on: -1 dreaded … +1 beloved
   alarm: number; // 0..1 panic radiating from nearby fleeing pips — fear is contagious
   torpor: number; // 0 hale … 1 at the end of a hunger fade — how far gone the body is
+  friendDist: number; // nearest calm flockmate; Infinity in an empty or frightened meadow
 }
 
 export interface Decision {
@@ -120,7 +122,7 @@ export function chooseState(
   // bedside 120 is the default world, the lab passes 0
   rescueFloor = 120,
 ): Decision {
-  const { presence, dist, speed, stillFor, treatDist, torpor } = senses;
+  const { presence, dist, speed, stillFor, treatDist, torpor, friendDist } = senses;
   const decide = (state: CritterState, next = moods, startled = false): Decision => ({
     state,
     moods: next,
@@ -172,16 +174,33 @@ export function chooseState(
   // which deadlocked rescue at zero rest and flickered grazers into
   // starvation while they looked busy eating
   const midBite = current === 'snack';
+  // the meadow entertains itself: a bored pip romps with a calm flockmate,
+  // a romp underway runs until joy is genuinely topped up (the wide exit
+  // stops flicker at the boredom line), and the starving never romp — the
+  // endgame stays a slow stagger, never a dance
+  const rompOn =
+    !starving &&
+    ((current === 'play' && needs.fun < 0.8 && friendDist < 300) ||
+      (needs.fun < 0.45 && friendDist < 240));
   if (needs.rest <= 0 && !midBite) return decide('sleep');
   if (!starving && needs.rest < 0.15 && !midBite) return decide('sleep');
-  if (!starving && !midBite && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) return decide('sleep');
-
   // hunger sharpens the nose: notice starts at a classic antenna's base
-  // reach and stretches as the belly empties
+  // reach and stretches as the belly empties. This check sits ABOVE the
+  // idle pull on purpose — a peckish body eats before it naps and before
+  // it dances, or an unattended romp could waltz a pip straight past the
+  // berry that would have kept the music going
   const noticeRange = lerp(NOSE_REACH, 700, clamp01((0.85 - needs.food) / 0.85)) * reach;
   if (treatDist < noticeRange && needs.food < 0.85) return decide('snack');
 
-  if (presence <= 0) return decide('wander');
+  // the idle nap yields to a friend in reach: the flock is company even
+  // when the hand has been gone for hours
+  if (!starving && !midBite && stillFor > sleepsAfter && (presence <= 0 || dist > 300)) {
+    return decide(rompOn ? 'play' : 'sleep');
+  }
+
+  // the romp never outranks the watcher's own games below: attention is
+  // the extra, and the flock is what remains when the hand is elsewhere
+  if (presence <= 0) return decide(rompOn ? 'play' : 'wander');
   if (dist < personalSpace(moods.trust, genes) + 30 && moods.trust > snugglesAt && speed < 70 && presence > 0.5) {
     return decide('snuggle');
   }
@@ -189,5 +208,5 @@ export function chooseState(
   if (moods.trust > followsAt && dist < 620 && speed > 25 && speed < 430 && presence > 0.5) {
     return decide('follow');
   }
-  return decide('wander');
+  return decide(rompOn ? 'play' : 'wander');
 }

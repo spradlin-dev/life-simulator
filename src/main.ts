@@ -388,6 +388,22 @@ function bestFood(pip: Pip): BerryKind {
   return best;
 }
 
+// a playmate is an awake, unafraid flockmate that is neither fleeing nor
+// visibly failing: pips romp with whoever is around, the way social
+// animals do — no watcher required, but sleepers and the fading are left
+// in peace
+function nearestPlaymate(pip: Pip): { pip: Pip; dist: number } | null {
+  let best: { pip: Pip; dist: number } | null = null;
+  for (const other of pips) {
+    if (other === pip || other.fading !== null || other.starvingFor > STARVE_FADE_AT) continue;
+    if (other.state === 'sleep' || other.state === 'flee' || other.state === 'cower') continue;
+    if (other.moods.fear >= 0.3) continue;
+    const d = Math.hypot(other.x - pip.x, other.y - pip.y);
+    if (!best || d < best.dist) best = { pip: other, dist: d };
+  }
+  return best;
+}
+
 // the single strand-mutation choke point: every future writer (gene
 // transfer above all) inherits the derived-digestion refresh for free
 function setStrand(pip: Pip, strand: string): void {
@@ -541,6 +557,9 @@ interface Pip {
   // digestion per pigment, cached from the strand's enzyme genes — derived
   // state, recomputed wherever the strand changes, never saved
   enzymes: Record<BerryKind, number>;
+  // this tick's romp partner, found once in the senses pass and reused by
+  // the play act — never saved, refreshed every tick
+  playmate: Pip | null;
   // whether this strand carries the transfer machinery, cached beside it
   // (the DONOR wears the pilus; this reading head belongs to the receiver)
   mobility: number;
@@ -591,6 +610,7 @@ function makePip(genes: Genes, strand: string, x: number, y: number, generation 
     wanderTarget: null,
     gut: [],
     enzymes: enzymesOf(strand),
+    playmate: null,
     mobility: mobilityOf(strand),
     transferHead: { partner: null, strand: '', start: 0, covered: 0 },
     pauseFor: 0,
@@ -900,12 +920,15 @@ function alarmNear(self: Pip): number {
 
 function sensesFor(pip: Pip): Senses {
   const treat = nearestTreatTo(pip.x, pip.y, pip);
+  const friend = nearestPlaymate(pip);
+  pip.playmate = friend ? friend.pip : null;
   return {
     presence: pointer.presence,
     dist: distToPointerOf(pip),
     speed: pointer.speed,
     stillFor: pointer.stillFor,
     treatDist: treat ? treat.dist : Infinity,
+    friendDist: friend ? friend.dist : Infinity,
     place: placeAt(pip.places, pip.x / world.w, pip.y / world.h),
     alarm: alarmNear(pip),
     // torpor tracks the VISIBLE fade window, so the reach never narrows
@@ -1022,6 +1045,22 @@ function act(pip: Pip, dt: number, t: number, expressed: Genes, sulkFactor: numb
       if (pip.emoteFor <= 0 && Math.random() < dt / 2) showEmote(pip, '♥');
       // shared warmth suffuses the spot itself
       pip.places = markPlace(pip.places, pip.x / world.w, pip.y / world.h, dt * 0.012);
+      break;
+    }
+    case 'play': {
+      // romping: tangential pursuit of a point ahead on the circle around
+      // the friend — the orbit flows smoothly from wherever the romp is
+      // now, and its 64px radius clears the 44px push bubble, so nobody
+      // gets shoved through (and no napping neighbor's gene-transfer link
+      // is jostled apart). Real exercise: a romp costs belly as it earns joy
+      const friend = pip.playmate;
+      if (!friend) {
+        settle(pip, dt, 4);
+        break;
+      }
+      const bearing = Math.atan2(pip.y - friend.y, pip.x - friend.x) + 0.9;
+      steerToward(pip, friend.x + Math.cos(bearing) * 64, friend.y + Math.sin(bearing) * 64, 260, 150, dt, sulkFactor);
+      if (pip.emoteFor <= 0 && Math.random() < dt / 4) showEmote(pip, '♪');
       break;
     }
     case 'snack': {
@@ -1258,7 +1297,7 @@ function hungerOf(pip: Pip): number {
   return Math.max(0, (0.45 - pip.needs.food) / 0.45);
 }
 
-const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e', '✿': '#e8b4d0', '✦': '#8fd8e8' };
+const EMOTE_COLORS: Record<string, string> = { '♥': '#ff8fa3', '●': '#e05c6e', '✿': '#e8b4d0', '✦': '#8fd8e8', '♪': '#ffd97a' };
 
 function drawPip(pip: Pip, t: number, isSelected: boolean, sulkFactor: number): void {
   const speed = Math.hypot(pip.vx, pip.vy);
@@ -1949,6 +1988,7 @@ const MOOD_LABELS: Record<CritterState, string> = {
   flee: 'nope nope nope',
   cower: 'frozen — be gentle',
   snuggle: 'happy near you',
+  play: 'romping with a friend',
   snack: 'munch munch',
   sleep: 'fast asleep',
 };
@@ -2124,10 +2164,13 @@ function simulate(dt: number, t: number): void {
       showEmote(pip, '✧');
     }
 
-    // mitosis: a hazard rate, not a timer — settled, well-lived pips sometimes
-    // just... double
+    // mitosis: a hazard rate, not a timer — settled, well-fed pips sometimes
+    // just... double. Sleep COUNTS: a cell does not consult consciousness
+    // before dividing, and the unattended meadow spends its whole food
+    // surplus asleep — a pip may wake up beside its brand-new sister. Only
+    // real alarm (flee, cower) interrupts the machinery
     pip.sinceSplit += dt;
-    const settled = pip.state !== 'flee' && pip.state !== 'cower' && pip.state !== 'sleep';
+    const settled = pip.state !== 'flee' && pip.state !== 'cower';
     if (pip.splitFor > 0) {
       if (!settled) {
         pip.splitFor = 0; // a scare aborts the division
@@ -2147,7 +2190,9 @@ function simulate(dt: number, t: number): void {
       settled &&
       pip.poofFor <= 0 &&
       pips.length + born.length + reserved < MAX_SAVED_PIPS &&
-      Math.random() < splitChance(happiness, pip.sinceSplit, dt, dials.births)
+      // division is paid for in energy, not mood: the belly's surplus sets
+      // the rate, while the comfort of the swell shapes only the copies
+      Math.random() < splitChance(pip.needs.food, pip.sinceSplit, dt, dials.births)
     ) {
       pip.splitFor = SPLIT_SWELL_S;
       pip.swellComfort = [];
